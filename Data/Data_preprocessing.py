@@ -1,4 +1,5 @@
 import Data
+import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
 
 def data_preprocess():
@@ -13,6 +14,22 @@ def data_preprocess():
     label = df[label_col]
     label = label.values
     #print(df)
+
+    #tackling 0s in Volume column in ^NSEI data
+    TICKER = ['NIFTYBEES.NS']
+    START = '20114-01-01'
+    END = '2026-02-02'
+
+
+    data = yf.download(tickers = TICKER,
+                    start = START,
+                    end = END)
+    #print(data.head())
+
+    df.loc[df[('Volume','^NSEI')]==0,[('Volume','^NSEI')]] = data[('Volume','NIFTYBEES.NS')]
+   
+    print(df.head())
+    print(df.shape)
 
 
     train_size = int(len(feartures)*0.8)

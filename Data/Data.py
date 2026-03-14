@@ -3,7 +3,7 @@ import yfinance as yf
 def scrape_data():
 
     TICKER = ['^NSEI']
-    START = '2007-09-17'
+    START = '2014-01-01'
     END = '2026-02-02'
 
     df = yf.download(tickers = TICKER,
