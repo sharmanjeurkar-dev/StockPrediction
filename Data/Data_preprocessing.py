@@ -1,23 +1,17 @@
-import Data
+from Data import data_scraper
 import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
 
-def data_preprocess():
+#deals with the 0s found in volume column for first few entries
+def deal_0_in_volume():
 
-    df = Data.scrape_data()
+    df = data_scraper.scrape_data()
 
-    feat_cols = ['Open','High','Low','Volume','Close']
-    feartures = df[feat_cols]
-    feartures = feartures.values
-
-    label_col = ['Close']
-    label = df[label_col]
-    label = label.values
-    #print(df)
+    
 
     #tackling 0s in Volume column in ^NSEI data
     TICKER = ['NIFTYBEES.NS']
-    START = '20114-01-01'
+    START = '2014-01-01'
     END = '2026-02-02'
 
 
@@ -29,8 +23,22 @@ def data_preprocess():
     df.loc[df[('Volume','^NSEI')]==0,[('Volume','^NSEI')]] = data[('Volume','NIFTYBEES.NS')]
    
     print(df.head())
-    print(df.shape)
+    # print(df.shape)
 
+    return df
+
+def feature_enginiering():
+
+    df = deal_0_in_volume()
+
+    feat_cols = ['Open','High','Low','Volume','Close']
+    feartures = df[feat_cols]
+    feartures = feartures.values
+
+    label_col = ['Close']
+    label = df[label_col]
+    label = label.values
+    #print(df)
 
     train_size = int(len(feartures)*0.8)
     X_train = feartures[:train_size]
@@ -46,11 +54,11 @@ def data_preprocess():
 
 
     X_train = process_feat.fit_transform(X_train)
-    X_test = process_feat.fit_transform(X_test)
+    X_test = process_feat.transform(X_test)
 
     Y_train = process_targ.fit_transform(Y_train)
-    Y_test = process_targ.fit_transform(Y_test)
+    Y_test = process_targ.transform(Y_test)
 
     print(X_train[0],X_test[0],Y_train[0],Y_test[0])
 
-data_preprocess()
+    return X_train,X_test,Y_train,Y_test
