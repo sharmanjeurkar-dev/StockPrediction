@@ -1,4 +1,4 @@
-from Data import data_scraper
+import data_scraper
 import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
 
@@ -61,4 +61,4 @@ def feature_enginiering():
 
     print(X_train[0],X_test[0],Y_train[0],Y_test[0])
 
-    return X_train,X_test,Y_train,Y_test
+    return X_train,X_test,Y_train,Y_test,process_targ
