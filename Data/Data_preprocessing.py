@@ -1,3 +1,19 @@
+import sys
+import os
+
+# Check if the code is running inside Kaggle's specific folder structure
+if os.path.exists('/kaggle/input'):
+    print(" Kaggle environment detected. Routing paths...")
+    
+    dataset_path = "/kaggle/input/helper-files/Dataset/Data" 
+    
+    # Only append it if it's not already there (prevents duplicates if you re-run the cell)
+    if dataset_path not in sys.path:
+        sys.path.append(dataset_path)
+    
+else:
+    print(" Local environment detected. Using standard imports.")
+
 import data_scraper
 import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
