@@ -1,14 +1,19 @@
 import yfinance as yf
+from datetime import date,timedelta
 
 def scrape_data():
 
+    today = date.today()
+
     TICKER = ['^NSEI']
-    START = '2014-01-01'
-    END = '2026-02-02'
+    START = str(today - timedelta(days=59))
+    END = str(today)
+    INTERVAL = '2m'
 
     df = yf.download(tickers = TICKER,
                     start = START,
-                    end = END)
+                    end = END,
+                    interval=INTERVAL)
 
 
     return df

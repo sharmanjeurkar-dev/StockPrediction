@@ -17,6 +17,7 @@ else:
 import data_scraper
 import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
+from datetime import date,timedelta
 
 #deals with the 0s found in volume column for first few entries
 def deal_0_in_volume():
@@ -26,14 +27,17 @@ def deal_0_in_volume():
     
 
     #tackling 0s in Volume column in ^NSEI data
+    today = date.today()
     TICKER = ['NIFTYBEES.NS']
-    START = '2014-01-01'
-    END = '2026-02-02'
+    START = str(today-timedelta(days=59))
+    END = str(today)
+    INTERVAL = '2m'
 
 
     data = yf.download(tickers = TICKER,
                     start = START,
-                    end = END)
+                    end = END,
+                    interval=INTERVAL)
     #print(data.head())
 
     df.loc[df[('Volume','^NSEI')]==0,[('Volume','^NSEI')]] = data[('Volume','NIFTYBEES.NS')]
