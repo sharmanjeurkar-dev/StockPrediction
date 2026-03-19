@@ -4,3 +4,5 @@ notebooks/kernel-metadata.json
 Dataset.zip
 Dataset
 access_token.txt
+fyersApi.log
+fyersRequests.log

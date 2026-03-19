@@ -19,45 +19,10 @@ import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler
 from datetime import date,timedelta
 
-#deals with the 0s found in volume column for first few entries
-def deal_0_in_volume():
-
-    df = data_scraper.scrape_data()
-
-    
-
-    #tackling 0s in Volume column in ^NSEI data
-    today = date.today()
-    TICKER = ['NIFTYBEES.NS']
-    START = str(today-timedelta(days=59))
-    END = str(today)
-    INTERVAL = '5'
-
-
-    data = yf.download(tickers = TICKER,
-                    start = START,
-                    end = END,
-                    interval=INTERVAL)
-    #print(data.head())
-
-
-    df.index = df.index.tz_localize(None)
-    data.index = data.index.tz_localize(None)
-
-    etf_volume = data[('Volume','NIFTYBEES.NS')]
-    aligned_volume = etf_volume.reindex().ffill().fillna(0)
-
-
-    df.loc[df[('Volume','^NSEI')]==0,[('Volume','^NSEI')]] = aligned_volume
-   
-    print(df.head())
-    # print(df.shape)
-
-    return df
 
 def feature_enginiering():
 
-    df = deal_0_in_volume()
+    df = data_scraper.scrape_data()
 
     feat_cols = ['Open','High','Low','Volume','Close']
     feartures = df[feat_cols]
@@ -90,3 +55,5 @@ def feature_enginiering():
     print(X_train[0],X_test[0],Y_train[0],Y_test[0])
 
     return X_train,X_test,Y_train,Y_test,process_targ
+
+feature_enginiering()
