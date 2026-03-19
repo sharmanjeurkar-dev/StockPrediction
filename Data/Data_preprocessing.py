@@ -31,7 +31,7 @@ def deal_0_in_volume():
     TICKER = ['NIFTYBEES.NS']
     START = str(today-timedelta(days=59))
     END = str(today)
-    INTERVAL = '2m'
+    INTERVAL = '5'
 
 
     data = yf.download(tickers = TICKER,
@@ -40,7 +40,15 @@ def deal_0_in_volume():
                     interval=INTERVAL)
     #print(data.head())
 
-    df.loc[df[('Volume','^NSEI')]==0,[('Volume','^NSEI')]] = data[('Volume','NIFTYBEES.NS')]
+
+    df.index = df.index.tz_localize(None)
+    data.index = data.index.tz_localize(None)
+
+    etf_volume = data[('Volume','NIFTYBEES.NS')]
+    aligned_volume = etf_volume.reindex().ffill().fillna(0)
+
+
+    df.loc[df[('Volume','^NSEI')]==0,[('Volume','^NSEI')]] = aligned_volume
    
     print(df.head())
     # print(df.shape)
