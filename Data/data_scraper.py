@@ -1,4 +1,19 @@
+import sys
 import os
+
+# Check if the code is running inside Kaggle's specific folder structure
+if os.path.exists('/kaggle/input'):
+    print(" Kaggle environment detected. Routing paths...")
+    
+    dataset_path = "/kaggle/input/helper-files/Dataset/Data" 
+    
+    # Only append it if it's not already there (prevents duplicates if you re-run the cell)
+    if dataset_path not in sys.path:
+        sys.path.append(dataset_path)
+    
+else:
+    print(" Local environment detected. Using standard imports.")
+
 import pandas as pd
 from datetime import date,timedelta
 from fyers_apiv3 import fyersModel
@@ -8,7 +23,7 @@ CLIENT_ID = "CGVLNFTR73-100"
 
 
 def get_tocken():
-    tocken_path = os.path.join('/home/sharmanjeurkar/PycharmProjects/StockPrediction/auth','access_token.txt')
+    tocken_path = os.path.join(os.curdir,'access_token.txt')
 
     try:
         with open(tocken_path,'r') as f:
