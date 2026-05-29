@@ -1,67 +1,72 @@
-import sys
 import os
-
-# Check if the code is running inside Kaggle's specific folder structure
-if os.path.exists('/kaggle/input'):
-    print(" Kaggle environment detected. Routing paths...")
-    
-    dataset_path = "/kaggle/input/helper-files/Dataset/Data" 
-    
-    # Only append it if it's not already there (prevents duplicates if you re-run the cell)
-    if dataset_path not in sys.path:
-        sys.path.append(dataset_path)
-    
-else:
-    print(" Local environment detected. Using standard imports.")
+from datetime import date, timedelta
 
 import pandas as pd
-from datetime import date,timedelta
 from fyers_apiv3 import fyersModel
-
 
 CLIENT_ID = "CGVLNFTR73-100"
 
 
-def get_tocken():
-    tocken_path = os.path.join(os.curdir,'access_token.txt')
+def get_token():
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    token_path = os.path.join(base_dir, "access_token.env")
 
     try:
-        with open(tocken_path,'r') as f:
+        with open(token_path, "r") as f:
             return f.read().strip()
-    except:
-        raise Exception("Could not open token file")
-        
+    except FileNotFoundError:
+        raise Exception(
+            f"Authentication failed: Could not find the file at {token_path}"
+        )
 
-def scrape_data(SYMBOL = 'NSE:NIFTY50-INDEX', DAYS = 100,INTERVAL = '2'):
 
-    access_tocken = get_tocken()
-    fyres = fyersModel.FyersModel(is_async = False,log_path = "",client_id=CLIENT_ID,token = access_tocken)
+fyres = fyersModel.FyersModel(
+    client_id=CLIENT_ID, token=get_token(), is_async=False, log_path=""
+)
 
+
+def scrape_data(
+    symbol: str,
+    DAYS=100,
+    resolution: str = "2",
+):
     today = date.today()
 
     START = today - timedelta(days=DAYS)
     END = today
 
-    DATA_PAYLOAD = {
-        "symbol":SYMBOL,
-        "resolution": INTERVAL,
-        "date_format":"1",
-        "range_from":START.strftime('%Y-%m-%d'),
-        "range_to":END.strftime('%Y-%m-%d'),
-        "cont_flag":"1"
+    data = {
+        "symbol": symbol,
+        "resolution": resolution,
+        "date_format": "1",
+        "range_from": START.strftime("%Y-%m-%d"),
+        "range_to": END.strftime("%Y-%m-%d"),
+        "cont_flag": "1",
     }
 
-    print(f'Fetching data for every {INTERVAL}m from {START} to {END} \n')
-    response = fyres.history(data=DATA_PAYLOAD)
+    try:
+        response = fyres.history(data=data)
+        if response.get("s") != "ok":
+            raise Exception(
+                f"Fyers API Error for {symbol}: {response.get('message', 'Unknown Error')}"
+            )
 
-    if(response['s']!='ok'):
-       raise Exception(f"Fyers API Error: {response.get('message', 'Unknown Error')}")
-    
-    coloumns = ['Datetime','Open','High','Low','Close','Volume']
-    df = pd.DataFrame(response['candles'],columns=coloumns)
-    df['Datetime'] = pd.to_datetime(df['Datetime'],unit='s')
-    df.set_index('Datetime',inplace = True)
-    print(df.head(10))
-    print(df.shape)
+        columns = ["Datetime", "Open", "High", "Low", "Close", "Volume"]
+        df = pd.DataFrame(response["candles"], columns=columns)
 
-    return df
+        df["Datetime"] = pd.to_datetime(df["Datetime"], unit="s")
+        df["Datetime"] = (
+            df["Datetime"]
+            .dt.tz_localize("UTC")
+            .dt.tz_convert("Asia/Kolkata")
+            .dt.tz_localize(None)
+        )
+        df.set_index("Datetime", inplace=True)
+
+        return df
+
+    except Exception as e:
+        print("Error fetching data from Fyers API:", e)
+        return pd.DataFrame()
+        # Return an empty DataFrame on error

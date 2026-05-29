@@ -3,6 +3,6 @@ models/__pycache__
 notebooks/kernel-metadata.json
 Dataset.zip
 Dataset
-access_token.txt
+access_token.env
 fyersApi.log
 fyersRequests.log
