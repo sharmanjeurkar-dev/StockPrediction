@@ -1,5 +1,3 @@
-from datetime import date, timedelta
-
 from Data import data_scraper
 from sklearn.preprocessing import MinMaxScaler
 
@@ -7,15 +5,16 @@ from sklearn.preprocessing import MinMaxScaler
 def feature_enginiering():
 
     df = data_scraper.scrape_data("NSE:HDFCBANK-EQ")
-
-    feat_cols = ["Open", "High", "Low", "Volume", "Close"]
+    df["Return"] = df["Close"].pct_change()
+    df.dropna(inplace=True)
+    feat_cols = ["Open", "High", "Low", "Volume", "Return"]
     feartures = df[feat_cols]
     feartures = feartures.values
 
-    label_col = ["Close"]
+    label_col = ["Return"]
     label = df[label_col]
     label = label.values
-    # print(df)
+    print(df)
 
     train_size = int(len(feartures) * 0.8)
     X_train = feartures[:train_size]
