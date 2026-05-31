@@ -4,14 +4,19 @@ from sklearn.preprocessing import MinMaxScaler
 
 def feature_enginiering():
 
-    df = data_scraper.scrape_data("NSE:HDFCBANK-EQ")
-    df["Return"] = df["Close"].pct_change()
+    df = data_scraper.scrape_data("NSE:NIFTY50-INDEX")
+
+    # Calculating the %returns on close price if the share was brought
+    df["Returns"] = df["Close"].pct_change()
+
+    df["Target"] = df["Returns"].shift(-1)
     df.dropna(inplace=True)
-    feat_cols = ["Open", "High", "Low", "Volume", "Return"]
+
+    feat_cols = ["Open", "High", "Low", "Volume", "Returns"]
     feartures = df[feat_cols]
     feartures = feartures.values
 
-    label_col = ["Return"]
+    label_col = ["Target"]
     label = df[label_col]
     label = label.values
     print(df)
