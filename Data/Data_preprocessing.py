@@ -9,10 +9,15 @@ def feature_enginiering():
     # Calculating the %returns on close price if the share was brought
     df["Returns"] = df["Close"].pct_change()
 
+    # z -score
+    df["Z-score-close"] = (df["Close"] - df["Close"].rolling(window=20).mean()) / df[
+        "Close"
+    ].rolling(window=20).std()
+
     df["Target"] = df["Returns"].shift(-1)
     df.dropna(inplace=True)
 
-    feat_cols = ["Open", "High", "Low", "Volume", "Returns"]
+    feat_cols = ["Open", "High", "Low", "Volume", "Returns", "Z-score-close"]
     feartures = df[feat_cols]
     feartures = feartures.values
 
