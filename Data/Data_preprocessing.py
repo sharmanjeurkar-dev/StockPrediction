@@ -36,6 +36,18 @@ def feature_enginiering():
     df["Single-Line"] = df["MACD-Line"].ewm(span=9, adjust=False).mean()
     df["MACD-Histogram"] = df["MACD-Line"] - df["Single-Line"]
 
+    # Bollinger Bandwidth
+    df["Middle-Band"] = df["Close"].rolling(window=20).mean()
+    df["Upper-Band"] = df["Middle-Band"] + 2 * df["Close"].rolling(window=20).std()
+    df["Lower-Band"] = df["Middle-Band"] - 2 * df["Close"].rolling(window=20).std()
+
+    df["Bollinger-Bandwidth"] = (df["Upper-Band"] - df["Lower-Band"]) / df[
+        "Middle-Band"
+    ]
+    df["%-Band"] = (df["Close"] - df["Lower-Band"]) / (
+        df["Upper-Band"] - df["Lower-Band"]
+    )
+
     df["Target"] = df["Returns"].shift(-1)
     df.dropna(inplace=True)
 
@@ -50,6 +62,8 @@ def feature_enginiering():
         "MACD-Line",
         "Single-Line",
         "MACD-Histogram",
+        "Bollinger-Bandwidth",
+        "%-Band",
     ]
     feartures = df[feat_cols]
     feartures = feartures.values
