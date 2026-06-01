@@ -1,3 +1,4 @@
+import numpy as np
 from Data import data_scraper
 from sklearn.preprocessing import MinMaxScaler
 
@@ -14,10 +15,29 @@ def feature_enginiering():
         "Close"
     ].rolling(window=20).std()
 
+    # RSI score
+    df["Change"] = df["Close"].diff()
+    df["Gain"] = np.where(df["Change"] > 0, df["Change"], 0)
+    df["Loss"] = np.where(df["Change"] < 0, abs(df["Change"]), 0)
+
+    df["Avg_Gain"] = df["Gain"].rolling(window=14).mean()
+    df["Avg_Loss"] = df["Loss"].rolling(window=14).mean()
+
+    df["Rs"] = df["Avg_Gain"] / df["Avg_Loss"]
+    df["RSI-close-score"] = 100 - 100 / (1 + df["Rs"])
+
     df["Target"] = df["Returns"].shift(-1)
     df.dropna(inplace=True)
 
-    feat_cols = ["Open", "High", "Low", "Volume", "Returns", "Z-score-close"]
+    feat_cols = [
+        "Open",
+        "High",
+        "Low",
+        "Volume",
+        "Returns",
+        "Z-score-close",
+        "RSI-close-score",
+    ]
     feartures = df[feat_cols]
     feartures = feartures.values
 
