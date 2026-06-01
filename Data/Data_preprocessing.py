@@ -86,13 +86,14 @@ def feature_enginiering():
 
     X_train = process_feat.fit_transform(X_train)
     X_test = process_feat.transform(X_test)
-
-    Y_train = process_targ.fit_transform(Y_train)
-    Y_test = process_targ.transform(Y_test)
+    Y_train = 100.0 * Y_train
+    Y_test = 100.0 * Y_test
+    # Y_train = process_targ.fit_transform(Y_train)
+    # Y_test = process_targ.transform(Y_test)
 
     print(X_train[0], X_test[0], Y_train[0], Y_test[0])
 
-    return X_train, X_test, Y_train, Y_test, process_targ
+    return X_train, X_test, Y_train, Y_test
 
 
 feature_enginiering()
