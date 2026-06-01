@@ -1,6 +1,7 @@
 import numpy as np
-from Data import data_scraper
 from sklearn.preprocessing import MinMaxScaler
+
+from Data import data_scraper
 
 
 def feature_enginiering():
@@ -26,6 +27,15 @@ def feature_enginiering():
     df["Rs"] = df["Avg_Gain"] / df["Avg_Loss"]
     df["RSI-close-score"] = 100 - 100 / (1 + df["Rs"])
 
+    # EMA Sscores for different windows
+    df["EMA-Today-close-26D"] = df["Close"].ewm(span=26, adjust=False).mean()
+    df["EMA-Today-close-12D"] = df["Close"].ewm(span=12, adjust=False).mean()
+
+    # MACD Scores
+    df["MACD-Line"] = df["EMA-Today-close-12D"] - df["EMA-Today-close-26D"]
+    df["Single-Line"] = df["MACD-Line"].ewm(span=9, adjust=False).mean()
+    df["MACD-Histogram"] = df["MACD-Line"] - df["Single-Line"]
+
     df["Target"] = df["Returns"].shift(-1)
     df.dropna(inplace=True)
 
@@ -37,6 +47,9 @@ def feature_enginiering():
         "Returns",
         "Z-score-close",
         "RSI-close-score",
+        "MACD-Line",
+        "Single-Line",
+        "MACD-Histogram",
     ]
     feartures = df[feat_cols]
     feartures = feartures.values
