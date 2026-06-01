@@ -7,11 +7,16 @@ class LSTM(nn.Module):
         self.lstm_layer = nn.LSTM(
             input_size=in_size, hidden_size=hidden_units, batch_first=True
         )
-        self.linear = nn.Linear(in_features=hidden_units, out_features=out_features)
+
+        self.fc1 = nn.Linear(in_features=hidden_units, out_features=hidden_units // 2)
+        self.activation = nn.GELU()
+        self.fc2 = nn.Linear(in_features=hidden_units // 2, out_features=out_features)
 
     def forward(self, x):
         output, _ = self.lstm_layer(x)
         x = output[:, -1, :]
-        x = self.linear(x)
+        x = self.fc1(x)
+        x = self.activation(x)
+        x = self.fc2(x)
 
         return x

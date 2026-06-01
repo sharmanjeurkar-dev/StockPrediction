@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
 from Data import data_scraper
@@ -48,6 +49,26 @@ def feature_enginiering():
         df["Upper-Band"] - df["Lower-Band"]
     )
 
+    # On-Balance Volume (OBV)
+    condition = [(df["Change"] > 0), (df["Change"] < 0)]
+    choices = [1, -1]
+    df["obv-dir"] = np.select(condition, choices, default=0)
+    df["OBV"] = (df["Volume"] * df["obv-dir"]).cumsum()
+
+    # Volume Rate of Change (VROC)
+    df["Volume-Rate-of-Change"] = (df["Volume"].pct_change(periods=10)) * 100
+
+    # ATR Compressoin Ratio
+    df["high_low"] = df["High"] - df["Low"]
+    df["high_prev_close"] = (df["High"] - df["Close"].shift(1)).abs()
+    df["low_prev_close"] = (df["Low"] - df["Close"].shift(1)).abs()
+
+    df["true_range"] = df[["high_low", "high_prev_close", "low_prev_close"]].max(axis=1)
+    df["atr-s"] = df["true_range"].rolling(window=14).mean()
+    df["atr-l"] = df["true_range"].rolling(window=50).mean()
+
+    df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
+
     df["Target"] = df["Returns"].shift(-1)
     df.dropna(inplace=True)
 
@@ -64,6 +85,9 @@ def feature_enginiering():
         "MACD-Histogram",
         "Bollinger-Bandwidth",
         "%-Band",
+        "OBV",
+        "Volume-Rate-of-Change",
+        "ATR-Ratio",
     ]
     feartures = df[feat_cols]
     feartures = feartures.values
