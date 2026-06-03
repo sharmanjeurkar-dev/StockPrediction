@@ -68,7 +68,9 @@ def feature_enginiering():
 
     df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
 
-    df["Target"] = df["Returns"].shift(-1)
+    df["Target"] = (
+        df["Returns"].shift(-1) + df["Returns"].shift(-2) + df["Returns"].shift(-3)
+    )
     df.dropna(inplace=True)
 
     feat_cols = [
