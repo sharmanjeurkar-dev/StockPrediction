@@ -1,6 +1,5 @@
 import numpy as np
-import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import StandardScaler
 
 from Data import data_scraper
 
@@ -105,7 +104,7 @@ def feature_enginiering():
     print(X_train.shape, Y_train.shape)
     print(X_test.shape, Y_test.shape)
 
-    process_feat = MinMaxScaler(feature_range=(0, 1))
+    process_feat = StandardScaler()
 
     X_train = process_feat.fit_transform(X_train)
     X_test = process_feat.transform(X_test)
