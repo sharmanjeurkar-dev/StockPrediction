@@ -12,11 +12,15 @@ class LSTM(nn.Module):
         self.activation = nn.GELU()
         self.fc2 = nn.Linear(in_features=hidden_units // 2, out_features=out_features)
 
+        # adding the squashing layer which will squash my output in between -1.0 to 1.0
+        self.position_activation = nn.Softsign()
+
     def forward(self, x):
         output, _ = self.lstm_layer(x)
         x = output[:, -1, :]
         x = self.fc1(x)
         x = self.activation(x)
         x = self.fc2(x)
+        position = self.position_activation(x)
 
-        return x
+        return position

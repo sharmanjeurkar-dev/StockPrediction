@@ -106,12 +106,11 @@ def feature_enginiering():
     print(X_test.shape, Y_test.shape)
 
     process_feat = MinMaxScaler(feature_range=(0, 1))
-    process_targ = MinMaxScaler(feature_range=(0, 1))
 
     X_train = process_feat.fit_transform(X_train)
     X_test = process_feat.transform(X_test)
-    Y_train = 100.0 * Y_train
-    Y_test = 100.0 * Y_test
+    # Y_train = 100.0 * Y_train
+    # Y_test = 100.0 * Y_test
     # Y_train = process_targ.fit_transform(Y_train)
     # Y_test = process_targ.transform(Y_test)
 
