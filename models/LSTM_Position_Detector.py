@@ -1,7 +1,7 @@
 from torch import nn
 
 
-class LSTM(nn.Module):
+class LSTM_Position_Detector(nn.Module):
     def __init__(self, in_size, hidden_units, out_features):
         super().__init__()
         self.lstm_layer = nn.LSTM(
