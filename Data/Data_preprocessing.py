@@ -1,12 +1,9 @@
 import numpy as np
+import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from Data import data_scraper
 
-
-def feature_enginiering():
-
-    df = data_scraper.scrape_data("NSE:NIFTY50-INDEX")
+def feature_enginiering(df: pd.DataFrame):
 
     # Calculating the %returns on close price if the share was brought
     df["Returns"] = df["Close"].pct_change()
@@ -69,6 +66,7 @@ def feature_enginiering():
     df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
 
     df["Target"] = df["Returns"].shift(-1)
+    df["Month"] = df.index.to_series().dt.month
     df.dropna(inplace=True)
 
     feat_cols = [
@@ -94,7 +92,6 @@ def feature_enginiering():
     label_col = ["Target"]
     label = df[label_col]
     label = label.values
-    print(df)
 
     train_size = int(len(feartures) * 0.8)
     X_train = feartures[:train_size]
@@ -108,14 +105,22 @@ def feature_enginiering():
 
     X_train = process_feat.fit_transform(X_train)
     X_test = process_feat.transform(X_test)
-    # Y_train = 100.0 * Y_train
-    # Y_test = 100.0 * Y_test
-    # Y_train = process_targ.fit_transform(Y_train)
-    # Y_test = process_targ.transform(Y_test)
 
     print(X_train[0], X_test[0], Y_train[0], Y_test[0])
 
     return X_train, X_test, Y_train, Y_test
 
 
-feature_enginiering()
+def walk_forward_slices(df: pd.DataFrame):
+    months = sorted(df["Month"].unique())
+    append_df = []
+    for i in range(1, len(months)):
+        train_month = months[:i]
+        train_df = df[df["Month"].isin(train_month)]
+
+        test_month = months[i]
+        test_df = df[df["Month"] == test_month]
+
+        append_df.append((train_df, test_df))
+
+    return append_df
