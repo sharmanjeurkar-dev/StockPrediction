@@ -7,19 +7,82 @@ project_root = os.path.abspath(os.path.join(script_dir, ".."))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+
+# ==========================================
+# PASTE THIS DIRECTLY UNDER YOUR IMPORTS
+# ==========================================
+class DualLogger:
+    def __init__(self, filepath, stream):
+        self.terminal = stream
+        self.log = open(filepath, "a")  # "a" ensures it appends instead of overwriting
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+
+# Route both standard prints AND tqdm progress bars to the file
+sys.stdout = DualLogger("stage2_training_logs.txt", sys.stdout)
+sys.stderr = DualLogger("stage2_training_logs.txt", sys.stderr)
+
 import numpy as np
+import pandas as pd
 import torch
 from matplotlib import pyplot as plt
+from sklearn.preprocessing import StandardScaler
 from torch import nn
 from tqdm import tqdm
 
-from Data import Data_prep, Data_preprocessing
+from Data import Data_prep
 from Data.Slider import Slider
 from models.LSTM_Position_Detector import LSTM_Position_Detector
+from utility import CalculatePNL
 from utility.DirectionalPeneltyLoss import SharpeRatio
 
 # Pulling data from Data preprocessing module which alos donwload the data for me
-X_train, X_test, Y_train, Y_test = Data_preprocessing.feature_enginiering()
+df = pd.read_csv(
+    "NIFTY_with_stage1_confidence.csv", index_col="Datetime", parse_dates=True
+)
+df["Target-Returns"] = df["Returns"].shift(-1)
+df.dropna(inplace=True)
+feat_cols = [
+    "Open",
+    "High",
+    "Low",
+    "Volume",
+    "Returns",
+    "Z-score-close",
+    "RSI-close-score",
+    "MACD-Line",
+    "Single-Line",
+    "MACD-Histogram",
+    "Bollinger-Bandwidth",
+    "%-Band",
+    "OBV",
+    "Volume-Rate-of-Change",
+    "ATR-Ratio",
+    "Stage-1-confidence",
+]
+
+features = df[feat_cols]
+features = features.values
+labels = df["Target-Returns"]
+labels = labels.to_numpy(dtype=float)
+train_size = int(0.8 * len(features))
+
+X_train_raw = features[:train_size]
+X_test_raw = features[train_size:]
+Y_train = labels[:train_size]
+Y_test = labels[train_size:]
+
+scaler = StandardScaler()
+X_train = scaler.fit_transform(X_train_raw)
+X_test = scaler.transform((X_test_raw))
 
 slidertr = Slider(feature=X_train, labels=Y_train, length=60)
 
@@ -31,7 +94,9 @@ x_testf, y_testf = sliderts.slider()
 # train data prep and load
 x_t, y_t = Data_prep.convertNumpyToTensors(x_trainf, y_trainf)
 train_dataset = Data_prep.createTensorDataset(x_t, y_t)
-train_data_load = Data_prep.loadData(dataset=train_dataset, batch=64, num_worker=0)
+train_data_load = Data_prep.loadData(
+    dataset=train_dataset, batch=64, num_worker=0, shuffle=False
+)
 # test data pred and load
 x_te, y_te = Data_prep.convertNumpyToTensors(x_testf, y_testf)
 test_dataset = Data_prep.createTensorDataset(x_te, y_te)
@@ -39,14 +104,10 @@ test_data_load = Data_prep.loadData(
     dataset=test_dataset, batch=64, num_worker=0, shuffle=False
 )
 
-x, y = next(iter(train_data_load))
-print(f"Shape of features {x.shape}")
-print(f"Shape of target {y.shape}")
-
 device = "mps" if (torch.backends.mps.is_available()) else "cpu"
 
 # model
-INPUT_SIZE = 15
+INPUT_SIZE = 16
 HIDDEN_UNITS = 128
 OUT_FEATURES = 1
 model = LSTM_Position_Detector(
@@ -55,7 +116,7 @@ model = LSTM_Position_Detector(
 
 
 # loss funtiona and Optimizer
-loss_fn = SharpeRatio(transaction_cost=0.0)
+loss_fn = SharpeRatio(transaction_cost=0.0001, holding_cost=0.0)
 optimizer = torch.optim.Adam(params=model.parameters(), lr=0.001, weight_decay=1e-4)
 
 
@@ -116,7 +177,7 @@ def traintest(
 
 # training and testing
 EPOCH = 501
-INTERVAL = 50
+INTERVAL = 25
 traintest(
     model=model,
     device=torch.device(device),
