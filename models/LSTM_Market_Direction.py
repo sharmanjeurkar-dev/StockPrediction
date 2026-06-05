@@ -5,7 +5,7 @@ class LSTM_Market_Direction(nn.Module):
     def __init__(self, in_size, hidden_units, out_feautures):
         super().__init__()
         self.lstm_layer = nn.LSTM(
-            input_size=in_size, hidden_size=hidden_units, batch_first=True
+            input_size=in_size, num_layers=2, hidden_size=hidden_units, batch_first=True
         )
         self.Dropout = nn.Dropout(p=0.2)
         self.linear_layer = nn.Linear(
