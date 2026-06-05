@@ -1,0 +1,160 @@
+import os
+import sys
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(script_dir, ".."))
+
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+import numpy as np
+import pandas as pd
+import torch
+from matplotlib import pyplot as plt
+from sklearn.preprocessing import StandardScaler
+from torch import nn
+from tqdm import tqdm
+
+from Data import Data_prep, Data_preprocessing, data_scraper
+from Data.Slider import Slider
+from models.LSTM_Market_Direction import LSTM_Market_Direction
+
+data = "NSE:NIFTY50-INDEX"
+
+df_raw = data_scraper.scrape_data(symbol=data, DAYS=100, resolution="1")
+
+df = Data_preprocessing.feature_enginiering(df=df_raw)
+
+dataframe_collection = Data_preprocessing.walk_forward_slices(df=df)
+
+feat_cols = [
+    "Open",
+    "High",
+    "Low",
+    "Volume",
+    "Returns",
+    "Z-score-close",
+    "RSI-close-score",
+    "MACD-Line",
+    "Single-Line",
+    "MACD-Histogram",
+    "Bollinger-Bandwidth",
+    "%-Band",
+    "OBV",
+    "Volume-Rate-of-Change",
+    "ATR-Ratio",
+]
+
+all_predictions = []
+
+for train_df, test_df in dataframe_collection:
+    # extract features and labels
+    X_train_raw = train_df[feat_cols].values
+    Y_train = train_df["Target"].values
+
+    X_test_raw = test_df[feat_cols].values
+    Y_test = test_df["Target"].values
+
+    # preprocess the features
+    scalar = StandardScaler()
+    X_train = scalar.fit_transform(X=X_train_raw)
+    X_test = scalar.transform(X=X_test_raw)
+
+    # slider on data
+    slider_tr = Slider(feature=X_train, labels=Y_train, length=60)
+    slider_te = Slider(feature=X_test, labels=Y_test, length=60)
+
+    x_train_slide, y_train_slide = slider_tr.slider()
+    x_test_slide, y_test_slide = slider_te.slider()
+
+    # convert numpy data to tensors
+    x_train_convert, y_train_convert = Data_prep.convertNumpyToTensors(
+        x_train_slide, y_train_slide
+    )
+    x_test_convert, y_test_convert = Data_prep.convertNumpyToTensors(
+        x_test_slide, y_test_slide
+    )
+
+    # Add data to a dataset
+    train_dataset = Data_prep.createTensorDataset(x_train_convert, y_train_convert)
+    test_dataset = Data_prep.createTensorDataset(x_test_convert, y_test_convert)
+
+    # load dataset
+    train_data_load = Data_prep.loadData(dataset=train_dataset, batch=64, num_worker=0)
+    test_data_load = Data_prep.loadData(
+        dataset=test_dataset, batch=64, num_worker=0, shuffle=False
+    )
+
+    # device setup
+    device = "mps" if (torch.backends.mps.is_available()) else "cpu"
+
+    # model
+    INPUT_SIZE = 15
+    HIDDEN_UNITS = 128
+    OUT_FEATURES = 1
+
+    model = LSTM_Market_Direction(
+        in_size=INPUT_SIZE, hidden_units=HIDDEN_UNITS, out_feautures=OUT_FEATURES
+    ).to(device=device)
+
+    # loss and optimizer
+    loss_fn = nn.BCELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+
+    EPOCHS = 500
+    for epoch in range(EPOCHS):
+        model.train()
+        train_running_loss = 0.0
+        test_running_loss = 0.0
+
+        loop = iter(tqdm(train_data_load, desc=f"Epoch: {epoch + 1}/{EPOCHS}"))
+
+        for x, y in loop:
+            x = x.to(device)
+            y = y.to(device)
+
+            prediction = model(x)
+
+            train_loss = loss_fn(prediction, y)
+
+            train_running_loss += train_loss.item()
+
+            optimizer.zero_grad()
+            train_loss.backward()
+            optimizer.step()
+
+        total_train_loss = train_running_loss / len(train_data_load)
+        if epoch % 25 == 0:
+            print(f"|Train Loss: {total_train_loss: 0.8f} |")
+    model.eval()
+    test_pred = []
+    with torch.inference_mode():
+        for x, y in test_data_load:
+            x = x.to(device)
+            y = y.to(device)
+            probabilities = model(x)
+
+            test_loss = loss_fn(probabilities, y)
+            test_running_loss += test_loss.item()
+            test_pred.append(probabilities.to("cpu").numpy().flatten())
+
+        total_test_loss = test_running_loss / len(test_data_load)
+        test_pred = np.concat(test_pred)
+
+        look_back = 60
+        align_test_index = test_df.index[look_back:]
+        test_pred_series = pd.Series(test_pred, index=align_test_index)
+        all_predictions.append(test_pred_series)
+
+        print(
+            f"Finished Month Step. Generated {len(test_pred_series)} clean out-of-sample predictions."
+        )
+
+
+final_confidence = pd.concat(all_predictions)
+
+df["Stage-1-confidence"] = final_confidence
+df["Stage-1-confidence"].dropna()
+
+df.to_csv("NIFTY_with_stage1_confidence.csv", index=True)
+print("Stage 1 Pipeline Complete! Dataset saved for Stage 2.")
