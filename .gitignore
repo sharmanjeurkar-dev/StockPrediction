@@ -7,3 +7,5 @@ Dataset
 access_token.env
 fyersApi.log
 fyersRequests.log
+Output.png
+stage2_training_logs.txt
