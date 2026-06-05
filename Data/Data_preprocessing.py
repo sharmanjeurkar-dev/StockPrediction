@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 
 
 def feature_enginiering(df: pd.DataFrame):
@@ -65,50 +64,13 @@ def feature_enginiering(df: pd.DataFrame):
 
     df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
 
-    df["Target"] = df["Returns"].shift(-1)
+    df["Target"] = np.where(df["Returns"].shift(-1) > 0, 1.0, 0.0)
     df["Month"] = df.index.to_series().dt.month
+    df = df.loc[~df.index.duplicated(keep="first")].copy()
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df.dropna(inplace=True)
 
-    feat_cols = [
-        "Open",
-        "High",
-        "Low",
-        "Volume",
-        "Returns",
-        "Z-score-close",
-        "RSI-close-score",
-        "MACD-Line",
-        "Single-Line",
-        "MACD-Histogram",
-        "Bollinger-Bandwidth",
-        "%-Band",
-        "OBV",
-        "Volume-Rate-of-Change",
-        "ATR-Ratio",
-    ]
-    feartures = df[feat_cols]
-    feartures = feartures.values
-
-    label_col = ["Target"]
-    label = df[label_col]
-    label = label.values
-
-    train_size = int(len(feartures) * 0.8)
-    X_train = feartures[:train_size]
-    X_test = feartures[train_size:]
-    Y_train = label[:train_size]
-    Y_test = label[train_size:]
-    print(X_train.shape, Y_train.shape)
-    print(X_test.shape, Y_test.shape)
-
-    process_feat = StandardScaler()
-
-    X_train = process_feat.fit_transform(X_train)
-    X_test = process_feat.transform(X_test)
-
-    print(X_train[0], X_test[0], Y_train[0], Y_test[0])
-
-    return X_train, X_test, Y_train, Y_test
+    return df
 
 
 def walk_forward_slices(df: pd.DataFrame):
