@@ -3,14 +3,35 @@ import sys
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, ".."))
-
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
+
+
+class DualLogger:
+    def __init__(self, filepath, stream):
+        self.terminal = stream
+        self.log = open(filepath, "a")  # "a" ensures it appends instead of overwriting
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+        self.log.flush()
+
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
+
+
+# Route both standard prints AND tqdm progress bars to the file
+sys.stdout = DualLogger("stage1_training_logs.txt", sys.stdout)
+sys.stderr = DualLogger("stage1_training_logs.txt", sys.stderr)
+
 
 import numpy as np
 import pandas as pd
 import torch
 from matplotlib import pyplot as plt
+from sklearn.metrics import auc, precision_recall_curve, roc_curve
 from sklearn.preprocessing import StandardScaler
 from torch import nn
 from tqdm import tqdm
@@ -21,7 +42,7 @@ from models.LSTM_Market_Direction import LSTM_Market_Direction
 
 data = "NSE:NIFTY50-INDEX"
 
-df_raw = data_scraper.scrape_data(symbol=data, DAYS=100, resolution="1")
+df_raw = data_scraper.scrape_data(symbol=data, DAYS=100, resolution="15")
 
 df = Data_preprocessing.feature_enginiering(df=df_raw)
 
@@ -90,7 +111,7 @@ for train_df, test_df in dataframe_collection:
 
     # model
     INPUT_SIZE = 15
-    HIDDEN_UNITS = 128
+    HIDDEN_UNITS = 32
     OUT_FEATURES = 1
 
     model = LSTM_Market_Direction(
@@ -158,3 +179,69 @@ df["Stage-1-confidence"].dropna()
 
 df.to_csv("NIFTY_with_stage1_confidence.csv", index=True)
 print("Stage 1 Pipeline Complete! Dataset saved for Stage 2.")
+
+
+def plot_metrics(model: torch.nn.Module, test_loader: torch.utils.data.DataLoader):
+    model.to("cpu")
+    model.eval()
+
+    all_preds = []
+    all_targets = []
+
+    print("Running diagnostics on Stage 1 Test Data...")
+
+    with torch.no_grad():
+        for x, y in test_loader:
+            x = x.to("cpu").to(torch.float32)
+            y = y.to("cpu").to(torch.float32)
+
+            output = model(x)
+
+            all_preds.append(output.numpy())
+            all_targets.append(y.numpy())
+
+    preds = np.concatenate(all_preds).flatten()
+    targets = np.concatenate(all_targets).flatten()
+
+    # --- PLOTTING ---
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+    # 1. Confidence Distribution Histogram
+    axes[0].hist(preds, bins=50, color="purple", alpha=0.7, edgecolor="black")
+    axes[0].axvline(
+        0.5, color="red", linestyle="dashed", linewidth=1.5, label="Neutral (0.5)"
+    )
+    axes[0].set_title("Model Confidence Distribution")
+    axes[0].set_xlabel("Predicted Probability (0 = Down, 1 = Up)")
+    axes[0].set_ylabel("Frequency")
+    axes[0].legend()
+
+    # 2. Precision vs. Threshold Curve
+    precision, recall, thresholds = precision_recall_curve(targets, preds)
+    # Thresholds array is 1 element shorter than precision/recall arrays
+    axes[1].plot(thresholds, precision[:-1], "b-", label="Precision", linewidth=2)
+    axes[1].set_title("Precision vs. Confidence Threshold")
+    axes[1].set_xlabel("Confidence Threshold")
+    axes[1].set_ylabel("Precision (Win Rate %)")
+    axes[1].axhline(0.5, color="gray", linestyle="dotted", label="50% Baseline")
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
+
+    # 3. ROC Curve & AUC
+    fpr, tpr, _ = roc_curve(targets, preds)
+    roc_auc = auc(fpr, tpr)
+    axes[2].plot(
+        fpr, tpr, color="darkorange", lw=2, label=f"ROC curve (AUC = {roc_auc:.3f})"
+    )
+    axes[2].plot([0, 1], [0, 1], color="navy", lw=2, linestyle="--")
+    axes[2].set_title("Receiver Operating Characteristic (ROC)")
+    axes[2].set_xlabel("False Positive Rate")
+    axes[2].set_ylabel("True Positive Rate")
+    axes[2].legend(loc="lower right")
+    axes[2].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+
+plot_metrics(model=model, test_loader=test_data_load)
