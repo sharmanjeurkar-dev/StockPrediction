@@ -37,8 +37,7 @@ def scrape_data(
     # End date is today
     end_date = datetime.now()
 
-    # We will do two chunks of 90 days (Total = 180 days / 6 months)
-    for i in range(2):
+    for i in range(3):
         # Calculate the chunk's start and end dates
         chunk_end = end_date - timedelta(days=(i * DAYS))
         chunk_start = chunk_end - timedelta(days=DAYS)
