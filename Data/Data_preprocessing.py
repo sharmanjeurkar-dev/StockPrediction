@@ -49,7 +49,7 @@ def feature_enginiering(df: pd.DataFrame):
     choices = [1, -1]
     df["obv-dir"] = np.select(condition, choices, default=0)
     df["OBV"] = (df["Volume"] * df["obv-dir"]).cumsum()
-
+    df["OBV-ROC"] = df["OBV"].pct_change(10)
     # Volume Rate of Change (VROC)
     df["Volume-Rate-of-Change"] = (df["Volume"].pct_change(periods=10)) * 100
 
@@ -64,8 +64,8 @@ def feature_enginiering(df: pd.DataFrame):
 
     df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
 
-    df["Target"] = np.where(df["Returns"].shift(-1) > 0, 1.0, 0.0)
-    df["Month"] = df.index.to_series().dt.month
+    df["Target"] = np.where(df["Returns"].shift(-1) > 0, 1, 0).astype(int)
+    df["Month"] = df.index.to_series().dt.to_period("M")
     df = df.loc[~df.index.duplicated(keep="first")].copy()
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df.dropna(inplace=True)

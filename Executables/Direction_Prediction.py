@@ -49,21 +49,15 @@ df = Data_preprocessing.feature_enginiering(df=df_raw)
 dataframe_collection = Data_preprocessing.walk_forward_slices(df=df)
 
 feat_cols = [
-    "Open",
-    "High",
-    "Low",
-    "Volume",
     "Returns",
     "Z-score-close",
     "RSI-close-score",
-    "MACD-Line",
-    "Single-Line",
     "MACD-Histogram",
     "Bollinger-Bandwidth",
     "%-Band",
-    "OBV",
     "Volume-Rate-of-Change",
     "ATR-Ratio",
+    "OBV-ROC",
 ]
 
 all_predictions = []
@@ -110,7 +104,7 @@ for train_df, test_df in dataframe_collection:
     device = "mps" if (torch.backends.mps.is_available()) else "cpu"
 
     # model
-    INPUT_SIZE = 15
+    INPUT_SIZE = 9
     HIDDEN_UNITS = 32
     OUT_FEATURES = 1
 
@@ -119,10 +113,10 @@ for train_df, test_df in dataframe_collection:
     ).to(device=device)
 
     # loss and optimizer
-    loss_fn = nn.BCELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4)
+    loss_fn = torch.nn.BCEWithLogitsLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
 
-    EPOCHS = 500
+    EPOCHS = 40
     for epoch in range(EPOCHS):
         model.train()
         train_running_loss = 0.0
@@ -195,7 +189,7 @@ def plot_metrics(model: torch.nn.Module, test_loader: torch.utils.data.DataLoade
             x = x.to("cpu").to(torch.float32)
             y = y.to("cpu").to(torch.float32)
 
-            output = model(x)
+            output = torch.sigmoid(model(x))
 
             all_preds.append(output.numpy())
             all_targets.append(y.numpy())
