@@ -26,6 +26,7 @@ class DualLogger:
 sys.stdout = DualLogger("stage1_training_logs.txt", sys.stdout)
 sys.stderr = DualLogger("stage1_training_logs.txt", sys.stderr)
 
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -236,6 +237,10 @@ def plot_metrics(model: torch.nn.Module, test_loader: torch.utils.data.DataLoade
 
     plt.tight_layout()
     plt.show()
+    current_dir = Path(__file__).parent
+    project_root = current_dir.parent
+    save_path = project_root / "Output2.png"
+    plt.savefig(save_path)
 
 
 plot_metrics(model=model, test_loader=test_data_load)

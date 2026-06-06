@@ -8,9 +8,6 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 
-# ==========================================
-# PASTE THIS DIRECTLY UNDER YOUR IMPORTS
-# ==========================================
 class DualLogger:
     def __init__(self, filepath, stream):
         self.terminal = stream
@@ -29,6 +26,8 @@ class DualLogger:
 # Route both standard prints AND tqdm progress bars to the file
 sys.stdout = DualLogger("stage2_training_logs.txt", sys.stdout)
 sys.stderr = DualLogger("stage2_training_logs.txt", sys.stderr)
+
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -51,22 +50,15 @@ df = pd.read_csv(
 df["Target-Returns"] = df["Returns"].shift(-1)
 df.dropna(inplace=True)
 feat_cols = [
-    "Open",
-    "High",
-    "Low",
-    "Volume",
+    "Stage-1-confidence",
     "Returns",
     "Z-score-close",
     "RSI-close-score",
-    "MACD-Line",
-    "Single-Line",
     "MACD-Histogram",
     "Bollinger-Bandwidth",
     "%-Band",
-    "OBV",
     "Volume-Rate-of-Change",
     "ATR-Ratio",
-    "Stage-1-confidence",
 ]
 
 features = df[feat_cols]
@@ -84,9 +76,9 @@ scaler = StandardScaler()
 X_train = scaler.fit_transform(X_train_raw)
 X_test = scaler.transform((X_test_raw))
 
-slidertr = Slider(feature=X_train, labels=Y_train, length=60)
+slidertr = Slider(feature=X_train, labels=Y_train, length=10)
 
-sliderts = Slider(feature=X_test, labels=Y_test, length=60)
+sliderts = Slider(feature=X_test, labels=Y_test, length=10)
 
 x_trainf, y_trainf = slidertr.slider()
 x_testf, y_testf = sliderts.slider()
@@ -107,8 +99,8 @@ test_data_load = Data_prep.loadData(
 device = "mps" if (torch.backends.mps.is_available()) else "cpu"
 
 # model
-INPUT_SIZE = 16
-HIDDEN_UNITS = 128
+INPUT_SIZE = 9
+HIDDEN_UNITS = 32
 OUT_FEATURES = 1
 model = LSTM_Position_Detector(
     in_size=INPUT_SIZE, hidden_units=HIDDEN_UNITS, out_features=OUT_FEATURES
@@ -116,8 +108,8 @@ model = LSTM_Position_Detector(
 
 
 # loss funtiona and Optimizer
-loss_fn = SharpeRatio(transaction_cost=0.0001, holding_cost=0.0)
-optimizer = torch.optim.Adam(params=model.parameters(), lr=0.001, weight_decay=1e-4)
+loss_fn = SharpeRatio(transaction_cost=0.0002, holding_cost=0.0)
+optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001, weight_decay=1e-3)
 
 
 # training and testing loop
@@ -142,11 +134,6 @@ def traintest(
             x = x.to(device)
             y = y.to(device)
             train_pred = model(x)
-
-            # if epoch<50:
-            #   loss_fn = loss_fn_1
-            # else:
-            #   loss_fn = loss_fn_2
 
             train_loss = loss_fn(train_pred, y)
             train_running_loss += train_loss.item()
@@ -176,8 +163,8 @@ def traintest(
 
 
 # training and testing
-EPOCH = 501
-INTERVAL = 25
+EPOCH = 50
+INTERVAL = 10
 traintest(
     model=model,
     device=torch.device(device),
@@ -245,6 +232,13 @@ def plot_predictions(model: torch.nn.Module, test_loader: torch.utils.data.DataL
 
     plt.tight_layout()
     plt.show()
+    current_dir = Path(__file__).parent
+    project_root = current_dir.parent
+    save_path = project_root / "Output2.png"
+    plt.savefig(save_path)
 
 
 plot_predictions(model=model, test_loader=test_data_load)
+CalculatePNL.calculate_pnl(
+    model=model, test_loader=test_data_load, transaction_cost=0.0002
+)
