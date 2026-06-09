@@ -11,3 +11,4 @@ Output1.png
 Output2.png
 stage2_training_logs.txt
 stage1_training_logs.txt
+models/saved/
