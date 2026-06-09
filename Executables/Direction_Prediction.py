@@ -1,6 +1,8 @@
 import os
 import sys
 
+import joblib
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, ".."))
 if project_root not in sys.path:
@@ -244,3 +246,12 @@ def plot_metrics(model: torch.nn.Module, test_loader: torch.utils.data.DataLoade
 
 
 plot_metrics(model=model, test_loader=test_data_load)
+torch.save(
+    model.state_dict(),
+    "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/Stage1.pt",
+)
+joblib.dump(
+    scalar,
+    "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/scaler_stage1.pkl",
+)
+print("✅ Stage 1 Model Saved!")

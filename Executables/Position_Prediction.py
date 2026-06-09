@@ -1,6 +1,8 @@
 import os
 import sys
 
+import joblib
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, ".."))
 
@@ -242,3 +244,12 @@ plot_predictions(model=model, test_loader=test_data_load)
 CalculatePNL.calculate_pnl(
     model=model, test_loader=test_data_load, transaction_cost=0.0002
 )
+torch.save(
+    model.state_dict(),
+    "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/Stage2.pt",
+)
+joblib.dump(
+    scaler,
+    "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/scaler_stage2.pkl",
+)
+print("✅ Stage 2 Model Saved!")
