@@ -60,7 +60,8 @@ def login_and_generate_token():
 
         # Save it to a text file automatically
         with open("access_token.env", "w") as f:
-            f.write(access_token)
+            f.write(f'FYERS_CLIENT_ID="{CLIENT_ID}"\n')
+            f.write(f'FYERS_ACCESS_TOKEN="{access_token}"\n')
         print(
             "\n Token automatically saved to 'access_token.txt'. You are ready to scrape!"
         )

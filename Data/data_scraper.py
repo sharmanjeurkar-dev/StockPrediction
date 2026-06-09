@@ -3,6 +3,7 @@ import time
 from datetime import datetime, timedelta
 
 import pandas as pd
+from dotenv import load_dotenv
 from fyers_apiv3 import fyersModel
 
 CLIENT_ID = "CGVLNFTR73-100"
@@ -13,13 +14,19 @@ def get_token():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     token_path = os.path.join(base_dir, "access_token.env")
 
-    try:
-        with open(token_path, "r") as f:
-            return f.read().strip()
-    except FileNotFoundError:
-        raise Exception(
-            f"Authentication failed: Could not find the file at {token_path}"
+    if not os.path.exists(token_path):
+        raise FileNotFoundError(
+            f"❌ Authentication failed: Could not find the file at {token_path}"
         )
+    load_dotenv(dotenv_path=token_path)
+    token = os.getenv("FYERS_ACCESS_TOKEN")
+    if not token:
+        raise ValueError(
+            "❌ Authentication failed: 'FYERS_ACCESS_TOKEN' was not found inside the .env file. "
+            "Did you run the generation script today?"
+        )
+
+    return token
 
 
 fyers = fyersModel.FyersModel(
