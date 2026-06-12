@@ -43,7 +43,7 @@ from Data import Data_prep, Data_preprocessing, data_scraper
 from Data.Slider import Slider
 from models.LSTM_Market_Direction import LSTM_Market_Direction
 
-data = "NSE:NIFTY50-INDEX"
+data = "NSE:RELIANCE-EQ"
 
 df_raw = data_scraper.scrape_data(symbol=data, DAYS=100, resolution="15")
 
@@ -52,6 +52,10 @@ df = Data_preprocessing.feature_enginiering(df=df_raw)
 dataframe_collection = Data_preprocessing.walk_forward_slices(df=df)
 
 feat_cols = [
+    "Time_Sin",
+    "Time_Cos",
+    "Volume_Price_Velocity",
+    "Intraday_Spread",
     "Returns",
     "Z-score-close",
     "RSI-close-score",
@@ -73,24 +77,41 @@ for train_df, test_df in dataframe_collection:
     X_test_raw = test_df[feat_cols].values
     Y_test = test_df["Target"].values
 
-    # preprocess the features
-    scalar = StandardScaler()
-    X_train = scalar.fit_transform(X=X_train_raw)
-    X_test = scalar.transform(X=X_test_raw)
+    def scale_sequences_locally(X_sequences):
 
-    # slider on data
-    slider_tr = Slider(feature=X_train, labels=Y_train, length=60)
-    slider_te = Slider(feature=X_test, labels=Y_test, length=60)
+        scaled_X = np.zeros_like(X_sequences)
+        for i in range(X_sequences.shape[0]):
+            seq = X_sequences[i]
+            # Calculate mean and std strictly within this specific 60-candle window
+            mean = np.mean(seq, axis=0)
+            std = np.std(seq, axis=0) + 1e-8  # Prevent division by zero
+            scaled_X[i] = (seq - mean) / std
+        return scaled_X
+
+    slider_tr = Slider(feature=X_train_raw, labels=Y_train, length=60)
+    slider_te = Slider(feature=X_test_raw, labels=Y_test, length=60)
 
     x_train_slide, y_train_slide = slider_tr.slider()
     x_test_slide, y_test_slide = slider_te.slider()
 
+    valid_train_idx = np.where(y_train_slide != -1)[0]
+    valid_test_idx = np.where(y_test_slide != -1)[0]
+
+    x_train_clean = x_train_slide[valid_train_idx]
+    y_train_clean = y_train_slide[valid_train_idx]
+
+    x_test_clean = x_test_slide[valid_test_idx]
+    y_test_clean = y_test_slide[valid_test_idx]
+
+    x_train_clean_scaled = scale_sequences_locally(x_train_clean)
+    x_test_clean_scaled = scale_sequences_locally(x_test_clean)
+
     # convert numpy data to tensors
     x_train_convert, y_train_convert = Data_prep.convertNumpyToTensors(
-        x_train_slide, y_train_slide
+        x_train_clean, y_train_clean
     )
     x_test_convert, y_test_convert = Data_prep.convertNumpyToTensors(
-        x_test_slide, y_test_slide
+        x_test_clean, y_test_clean
     )
 
     # Add data to a dataset
@@ -98,17 +119,17 @@ for train_df, test_df in dataframe_collection:
     test_dataset = Data_prep.createTensorDataset(x_test_convert, y_test_convert)
 
     # load dataset
-    train_data_load = Data_prep.loadData(dataset=train_dataset, batch=64, num_worker=0)
+    train_data_load = Data_prep.loadData(dataset=train_dataset, batch=128, num_worker=0)
     test_data_load = Data_prep.loadData(
-        dataset=test_dataset, batch=64, num_worker=0, shuffle=False
+        dataset=test_dataset, batch=128, num_worker=0, shuffle=False
     )
 
     # device setup
     device = "mps" if (torch.backends.mps.is_available()) else "cpu"
 
     # model
-    INPUT_SIZE = 9
-    HIDDEN_UNITS = 32
+    INPUT_SIZE = 13
+    HIDDEN_UNITS = 128
     OUT_FEATURES = 1
 
     model = LSTM_Market_Direction(
@@ -119,7 +140,7 @@ for train_df, test_df in dataframe_collection:
     loss_fn = torch.nn.BCEWithLogitsLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
 
-    EPOCHS = 40
+    EPOCHS = 30
     for epoch in range(EPOCHS):
         model.train()
         train_running_loss = 0.0
@@ -160,7 +181,14 @@ for train_df, test_df in dataframe_collection:
         test_pred = np.concat(test_pred)
 
         look_back = 60
-        align_test_index = test_df.index[look_back:]
+
+        # 1. Get the original full timeline of sliding windows
+        base_test_index = test_df.index[look_back:]
+
+        # 2. Filter the timeline using the EXACT SAME indices that survived the filter earlier
+        align_test_index = base_test_index[valid_test_idx]
+
+        # 3. Now both the predictions and the index will be exactly 3972!
         test_pred_series = pd.Series(test_pred, index=align_test_index)
         all_predictions.append(test_pred_series)
 
@@ -239,10 +267,6 @@ def plot_metrics(model: torch.nn.Module, test_loader: torch.utils.data.DataLoade
 
     plt.tight_layout()
     plt.show()
-    current_dir = Path(__file__).parent
-    project_root = current_dir.parent
-    save_path = project_root / "Output2.png"
-    plt.savefig(save_path)
 
 
 plot_metrics(model=model, test_loader=test_data_load)
@@ -250,8 +274,5 @@ torch.save(
     model.state_dict(),
     "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/Stage1.pt",
 )
-joblib.dump(
-    scalar,
-    "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/scaler_stage1.pkl",
-)
+
 print("✅ Stage 1 Model Saved!")

@@ -52,7 +52,10 @@ df = pd.read_csv(
 df["Target-Returns"] = df["Returns"].shift(-1)
 df.dropna(inplace=True)
 feat_cols = [
-    "Stage-1-confidence",
+    "Time_Cos",
+    "Time_Sin",
+    "Volume_Price_Velocity",
+    "Intraday_Spread",
     "Returns",
     "Z-score-close",
     "RSI-close-score",
@@ -61,6 +64,8 @@ feat_cols = [
     "%-Band",
     "Volume-Rate-of-Change",
     "ATR-Ratio",
+    "OBV-ROC",
+    "Stage-1-confidence",
 ]
 
 features = df[feat_cols]
@@ -74,35 +79,58 @@ X_test_raw = features[train_size:]
 Y_train = labels[:train_size]
 Y_test = labels[train_size:]
 
-scaler = StandardScaler()
-X_train = scaler.fit_transform(X_train_raw)
-X_test = scaler.transform((X_test_raw))
 
-slidertr = Slider(feature=X_train, labels=Y_train, length=10)
+def scale_sequences_locally(X_sequences):
+    """
+    Standardizes each 10-candle sequence window individually.
+    """
+    scaled_X = np.zeros_like(X_sequences)
+    for i in range(X_sequences.shape[0]):
+        seq = X_sequences[i]
+        mean = np.mean(seq, axis=0)
+        std = np.std(seq, axis=0) + 1e-8  # Prevent division by zero
+        scaled_X[i] = (seq - mean) / std
+    return scaled_X
 
-sliderts = Slider(feature=X_test, labels=Y_test, length=10)
 
-x_trainf, y_trainf = slidertr.slider()
-x_testf, y_testf = sliderts.slider()
+slider_tr = Slider(feature=X_train_raw, labels=Y_train, length=10)
+slider_te = Slider(feature=X_test_raw, labels=Y_test, length=10)
+
+x_train_slide, y_train_slide = slider_tr.slider()
+x_test_slide, y_test_slide = slider_te.slider()
 
 # train data prep and load
-x_t, y_t = Data_prep.convertNumpyToTensors(x_trainf, y_trainf)
-train_dataset = Data_prep.createTensorDataset(x_t, y_t)
-train_data_load = Data_prep.loadData(
-    dataset=train_dataset, batch=64, num_worker=0, shuffle=False
-)
+train_tech = x_train_slide[:, :, :-1]  # First 13 columns
+train_prob = x_train_slide[:, :, -1:]  # The 14th column (Probability)
+
+test_tech = x_test_slide[:, :, :-1]
+test_prob = x_test_slide[:, :, -1:]
+
+# B. Scale ONLY the technical features locally
+train_tech_scaled = scale_sequences_locally(train_tech)
+test_tech_scaled = scale_sequences_locally(test_tech)
+
+# C. Stitch the untouched probability column back onto the scaled features
+x_train_final = np.concatenate((train_tech_scaled, train_prob), axis=2)
+x_test_final = np.concatenate((test_tech_scaled, test_prob), axis=2)
+
+x_t, y_t = Data_prep.convertNumpyToTensors(x_train_final, y_train_slide)
+
 # test data pred and load
-x_te, y_te = Data_prep.convertNumpyToTensors(x_testf, y_testf)
+x_te, y_te = Data_prep.convertNumpyToTensors(x_test_final, y_test_slide)
 test_dataset = Data_prep.createTensorDataset(x_te, y_te)
 test_data_load = Data_prep.loadData(
-    dataset=test_dataset, batch=64, num_worker=0, shuffle=False
+    dataset=test_dataset, batch=128, num_worker=0, shuffle=False
 )
-
+train_dataset = Data_prep.createTensorDataset(x_t, y_t)
+train_data_load = Data_prep.loadData(
+    dataset=train_dataset, batch=128, num_worker=0, shuffle=False
+)
 device = "mps" if (torch.backends.mps.is_available()) else "cpu"
 
 # model
-INPUT_SIZE = 9
-HIDDEN_UNITS = 32
+INPUT_SIZE = 14
+HIDDEN_UNITS = 64
 OUT_FEATURES = 1
 model = LSTM_Position_Detector(
     in_size=INPUT_SIZE, hidden_units=HIDDEN_UNITS, out_features=OUT_FEATURES
@@ -110,7 +138,7 @@ model = LSTM_Position_Detector(
 
 
 # loss funtiona and Optimizer
-loss_fn = SharpeRatio(transaction_cost=0.0002, holding_cost=0.0)
+loss_fn = SharpeRatio(transaction_cost=0.0003, holding_cost=0.0)
 optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001, weight_decay=1e-3)
 
 
@@ -234,22 +262,14 @@ def plot_predictions(model: torch.nn.Module, test_loader: torch.utils.data.DataL
 
     plt.tight_layout()
     plt.show()
-    current_dir = Path(__file__).parent
-    project_root = current_dir.parent
-    save_path = project_root / "Output2.png"
-    plt.savefig(save_path)
 
 
 plot_predictions(model=model, test_loader=test_data_load)
 CalculatePNL.calculate_pnl(
-    model=model, test_loader=test_data_load, transaction_cost=0.0002
+    model=model, test_loader=test_data_load, transaction_cost=0.0003
 )
 torch.save(
     model.state_dict(),
     "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/Stage2.pt",
-)
-joblib.dump(
-    scaler,
-    "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/scaler_stage2.pkl",
 )
 print("✅ Stage 2 Model Saved!")
