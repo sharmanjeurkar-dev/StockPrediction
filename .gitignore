@@ -7,3 +7,10 @@ Dataset
 access_token.env
 fyersApi.log
 fyersRequests.log
+Output1.png
+Output2.png
+stage2_training_logs.txt
+stage1_training_logs.txt
+models/saved/
+test/test.py
+.DS_Store 

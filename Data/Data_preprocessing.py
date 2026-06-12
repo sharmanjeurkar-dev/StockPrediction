@@ -1,14 +1,11 @@
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import MinMaxScaler
-
-from Data import data_scraper
 
 
-def feature_enginiering():
+def feature_enginiering(df: pd.DataFrame):
 
-    df = data_scraper.scrape_data("NSE:NIFTY50-INDEX")
-
+    df.sort_index(inplace=True)
+    df = df.loc[~df.index.duplicated(keep="first")].copy()
     # Calculating the %returns on close price if the share was brought
     df["Returns"] = df["Close"].pct_change()
 
@@ -48,15 +45,20 @@ def feature_enginiering():
     df["%-Band"] = (df["Close"] - df["Lower-Band"]) / (
         df["Upper-Band"] - df["Lower-Band"]
     )
+    df["Intraday_Spread"] = (df["High"] - df["Low"]) / df["Close"]
+    df["Volume_Price_Velocity"] = df["Returns"] * (
+        df["Volume"] / df["Volume"].rolling(20).mean()
+    )
 
     # On-Balance Volume (OBV)
     condition = [(df["Change"] > 0), (df["Change"] < 0)]
     choices = [1, -1]
     df["obv-dir"] = np.select(condition, choices, default=0)
     df["OBV"] = (df["Volume"] * df["obv-dir"]).cumsum()
-
-    # Volume Rate of Change (VROC)
-    df["Volume-Rate-of-Change"] = (df["Volume"].pct_change(periods=10)) * 100
+    df["OBV-ROC"] = df["OBV"].pct_change(10).replace([np.inf, -np.inf], 0).fillna(0)
+    df["Volume-Rate-of-Change"] = (df["Volume"].pct_change(periods=10)).replace(
+        [np.inf, -np.inf], 0
+    ).fillna(0) * 100
 
     # ATR Compressoin Ratio
     df["high_low"] = df["High"] - df["Low"]
@@ -69,55 +71,74 @@ def feature_enginiering():
 
     df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
 
-    df["Target"] = df["Returns"].shift(-1)
+    df["Year"] = df.index.year
+    minutes_elapsed = (df.index.hour * 60 + df.index.minute) - 555
+    time_fraction = np.clip(minutes_elapsed / 375.0, 0.0, 1.0)
+    df["Time_Sin"] = np.sin(time_fraction * 2 * np.pi)
+    df["Time_Cos"] = np.cos(time_fraction * 2 * np.pi)
+    df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    df["Daily_Vol"] = df["Close"].pct_change().rolling(window=25).std()
+    df = apply_triple_barrier_labels(df, vol_col="Daily_Vol", max_candles=15)
     df.dropna(inplace=True)
 
-    feat_cols = [
-        "Open",
-        "High",
-        "Low",
-        "Volume",
-        "Returns",
-        "Z-score-close",
-        "RSI-close-score",
-        "MACD-Line",
-        "Single-Line",
-        "MACD-Histogram",
-        "Bollinger-Bandwidth",
-        "%-Band",
-        "OBV",
-        "Volume-Rate-of-Change",
-        "ATR-Ratio",
-    ]
-    feartures = df[feat_cols]
-    feartures = feartures.values
-
-    label_col = ["Target"]
-    label = df[label_col]
-    label = label.values
-    print(df)
-
-    train_size = int(len(feartures) * 0.8)
-    X_train = feartures[:train_size]
-    X_test = feartures[train_size:]
-    Y_train = label[:train_size]
-    Y_test = label[train_size:]
-    print(X_train.shape, Y_train.shape)
-    print(X_test.shape, Y_test.shape)
-
-    process_feat = MinMaxScaler(feature_range=(0, 1))
-    process_targ = MinMaxScaler(feature_range=(0, 1))
-
-    X_train = process_feat.fit_transform(X_train)
-    X_test = process_feat.transform(X_test)
-    Y_train = 100.0 * Y_train
-    Y_test = 100.0 * Y_test
-    # Y_train = process_targ.fit_transform(Y_train)
-    # Y_test = process_targ.transform(Y_test)
-
-    print(X_train[0], X_test[0], Y_train[0], Y_test[0])
-
-    return X_train, X_test, Y_train, Y_test
+    return df
 
 
-feature_enginiering()
+def walk_forward_slices(df: pd.DataFrame):
+    year = sorted(df["Year"].unique())
+    append_df = []
+    for i in range(1, len(year)):
+        train_year = year[:i]
+        train_df = df[df["Year"].isin(train_year)].copy()
+
+        test_year = year[i]
+        test_df = df[df["Year"] == test_year]
+
+        append_df.append((train_df, test_df))
+
+    return append_df
+
+
+def apply_triple_barrier_labels(df: pd.DataFrame, vol_col="Daily_Vol", max_candles=20):
+
+    close = df["Close"].values
+    high = df["High"].values
+    low = df["Low"].values
+    vol = df[vol_col].values
+
+    labels = np.zeros(len(df))
+
+    for i in range(len(df) - max_candles):
+        entry_price = close[i]
+        current_vol = vol[i]
+
+        # Handle early rows where rolling volatility is still NaN or Zero
+        if np.isnan(current_vol) or current_vol == 0:
+            labels[i] = -1  # Mark for deletion
+            continue
+
+        # Dynamically scale barriers: 2.0x vol for Profit, 1.5x vol for Stop Loss
+        upper_barrier = entry_price * (1 + (3 * current_vol))
+        lower_barrier = entry_price * (1 - (3 * current_vol))
+
+        for j in range(1, max_candles + 1):
+            future_idx = i + j
+
+            # 1. Check Upper Barrier (Profit Target hit first)
+            if high[future_idx] >= upper_barrier:
+                labels[i] = 1  # Bullish Breakout
+                break
+
+            # 2. Check Lower Barrier (Stop Loss hit first)
+            elif low[future_idx] <= lower_barrier:
+                labels[i] = 0  # Bearish Breakdown
+                break
+
+            # 3. Vertical Time Barrier: Sideways Chop
+            if j == max_candles:
+                labels[i] = -1  # Mark sideways noise for deletion
+
+    df["Target"] = labels.astype(int)
+    df = df[df["Target"] != -1].copy()
+    return df
