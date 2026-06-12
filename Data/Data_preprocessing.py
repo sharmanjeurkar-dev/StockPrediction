@@ -4,6 +4,8 @@ import pandas as pd
 
 def feature_enginiering(df: pd.DataFrame):
 
+    df.sort_index(inplace=True)
+    df = df.loc[~df.index.duplicated(keep="first")].copy()
     # Calculating the %returns on close price if the share was brought
     df["Returns"] = df["Close"].pct_change()
 
@@ -43,15 +45,20 @@ def feature_enginiering(df: pd.DataFrame):
     df["%-Band"] = (df["Close"] - df["Lower-Band"]) / (
         df["Upper-Band"] - df["Lower-Band"]
     )
+    df["Intraday_Spread"] = (df["High"] - df["Low"]) / df["Close"]
+    df["Volume_Price_Velocity"] = df["Returns"] * (
+        df["Volume"] / df["Volume"].rolling(20).mean()
+    )
 
     # On-Balance Volume (OBV)
     condition = [(df["Change"] > 0), (df["Change"] < 0)]
     choices = [1, -1]
     df["obv-dir"] = np.select(condition, choices, default=0)
     df["OBV"] = (df["Volume"] * df["obv-dir"]).cumsum()
-    df["OBV-ROC"] = df["OBV"].pct_change(10)
-    # Volume Rate of Change (VROC)
-    df["Volume-Rate-of-Change"] = (df["Volume"].pct_change(periods=10)) * 100
+    df["OBV-ROC"] = df["OBV"].pct_change(10).replace([np.inf, -np.inf], 0).fillna(0)
+    df["Volume-Rate-of-Change"] = (df["Volume"].pct_change(periods=10)).replace(
+        [np.inf, -np.inf], 0
+    ).fillna(0) * 100
 
     # ATR Compressoin Ratio
     df["high_low"] = df["High"] - df["Low"]
@@ -64,25 +71,74 @@ def feature_enginiering(df: pd.DataFrame):
 
     df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
 
-    df["Target"] = np.where(df["Returns"].shift(-1) > 0, 1, 0).astype(int)
-    df["Month"] = df.index.to_series().dt.to_period("M")
-    df = df.loc[~df.index.duplicated(keep="first")].copy()
+    df["Year"] = df.index.year
+    minutes_elapsed = (df.index.hour * 60 + df.index.minute) - 555
+    time_fraction = np.clip(minutes_elapsed / 375.0, 0.0, 1.0)
+    df["Time_Sin"] = np.sin(time_fraction * 2 * np.pi)
+    df["Time_Cos"] = np.cos(time_fraction * 2 * np.pi)
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    df["Daily_Vol"] = df["Close"].pct_change().rolling(window=25).std()
+    df = apply_triple_barrier_labels(df, vol_col="Daily_Vol", max_candles=15)
     df.dropna(inplace=True)
 
     return df
 
 
 def walk_forward_slices(df: pd.DataFrame):
-    months = sorted(df["Month"].unique())
+    year = sorted(df["Year"].unique())
     append_df = []
-    for i in range(1, len(months)):
-        train_month = months[:i]
-        train_df = df[df["Month"].isin(train_month)]
+    for i in range(1, len(year)):
+        train_year = year[:i]
+        train_df = df[df["Year"].isin(train_year)].copy()
 
-        test_month = months[i]
-        test_df = df[df["Month"] == test_month]
+        test_year = year[i]
+        test_df = df[df["Year"] == test_year]
 
         append_df.append((train_df, test_df))
 
     return append_df
+
+
+def apply_triple_barrier_labels(df: pd.DataFrame, vol_col="Daily_Vol", max_candles=20):
+
+    close = df["Close"].values
+    high = df["High"].values
+    low = df["Low"].values
+    vol = df[vol_col].values
+
+    labels = np.zeros(len(df))
+
+    for i in range(len(df) - max_candles):
+        entry_price = close[i]
+        current_vol = vol[i]
+
+        # Handle early rows where rolling volatility is still NaN or Zero
+        if np.isnan(current_vol) or current_vol == 0:
+            labels[i] = -1  # Mark for deletion
+            continue
+
+        # Dynamically scale barriers: 2.0x vol for Profit, 1.5x vol for Stop Loss
+        upper_barrier = entry_price * (1 + (3 * current_vol))
+        lower_barrier = entry_price * (1 - (3 * current_vol))
+
+        for j in range(1, max_candles + 1):
+            future_idx = i + j
+
+            # 1. Check Upper Barrier (Profit Target hit first)
+            if high[future_idx] >= upper_barrier:
+                labels[i] = 1  # Bullish Breakout
+                break
+
+            # 2. Check Lower Barrier (Stop Loss hit first)
+            elif low[future_idx] <= lower_barrier:
+                labels[i] = 0  # Bearish Breakdown
+                break
+
+            # 3. Vertical Time Barrier: Sideways Chop
+            if j == max_candles:
+                labels[i] = -1  # Mark sideways noise for deletion
+
+    df["Target"] = labels.astype(int)
+    df = df[df["Target"] != -1].copy()
+    return df
