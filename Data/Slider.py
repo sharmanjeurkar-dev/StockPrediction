@@ -11,7 +11,7 @@ class Slider:
         x = []
         y = []
 
-        for i in range(len(self.feature) - self.length):
+        for i in range(len(self.feature) - self.length + 1):
             xws = self.feature[i : (i + self.length)]
             yws = self.labels[i + self.length - 1]
 
