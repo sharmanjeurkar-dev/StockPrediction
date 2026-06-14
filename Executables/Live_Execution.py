@@ -2,6 +2,7 @@ import csv
 import os
 import sys
 import time
+from collections import deque
 from datetime import date, datetime, timedelta
 
 import numpy as np
@@ -45,16 +46,12 @@ fyers = fyersModel.FyersModel(
 # 2. LIVE FEATURE ENGINEERING
 # ==========================================
 def live_feature_engineering(df: pd.DataFrame):
-    """
-    Calculates 13 features for live execution.
-    Omits Triple Barrier Method and dropna() to prevent deleting the live candle.
-    """
+    """Calculates 13 features for live execution."""
     df.sort_index(inplace=True)
     df = df.loc[~df.index.duplicated(keep="first")].copy()
 
     df["Returns"] = df["Close"].pct_change()
 
-    # Structural Features
     df["Intraday_Spread"] = (df["High"] - df["Low"]) / df["Close"]
     df["Volume_Price_Velocity"] = df["Returns"] * (
         df["Volume"] / df["Volume"].rolling(20).mean()
@@ -106,20 +103,12 @@ def live_feature_engineering(df: pd.DataFrame):
     df["atr-l"] = df["true_range"].rolling(window=50).mean()
     df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
 
-    # ==========================================
-    # 🔥 TIME-OF-DAY CYCLICAL PHYSICS 🔥
-    # ==========================================
     dt_index = pd.to_datetime(df.index)
-
     minutes_elapsed = (dt_index.hour * 60 + dt_index.minute) - 555
     time_fraction = np.clip(minutes_elapsed / 375.0, 0.0, 1.0)
     df["Time_Sin"] = np.sin(time_fraction * 2 * np.pi)
     df["Time_Cos"] = np.cos(time_fraction * 2 * np.pi)
 
-    df["Time_Sin"] = np.sin(time_fraction * 2 * np.pi)
-    df["Time_Cos"] = np.cos(time_fraction * 2 * np.pi)
-
-    # Fill NaNs created by rolling windows so PyTorch tensors don't crash
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
     df = df.bfill().ffill().fillna(0)
 
@@ -179,7 +168,6 @@ def start_trading_bot():
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     print(f"🚀 Starting Live Trading Engine on {device}...")
 
-    # Load Stage 1 Model (Direction)
     INPUT_SIZE_1 = 13
     HIDDEN_UNITS_1 = 128
     stage1_model = LSTM_Market_Direction(
@@ -194,7 +182,6 @@ def start_trading_bot():
     )
     stage1_model.eval()
 
-    # Load Stage 2 Model (Position / Risk)
     INPUT_SIZE_2 = 14
     HIDDEN_UNITS_2 = 64
     stage2_model = LSTM_Position_Detector(
@@ -209,7 +196,6 @@ def start_trading_bot():
     )
     stage2_model.eval()
 
-    # CRITICAL: 13 Features. "Stage-1-confidence" is NOT in this list.
     feat_cols = [
         "Time_Cos",
         "Time_Sin",
@@ -226,6 +212,41 @@ def start_trading_bot():
         "OBV-ROC",
     ]
 
+    # Grid Search Optimized Thresholds
+    UP_THRESH = 0.4531
+    DOWN_THRESH = 0.4245
+
+    # ==========================================
+    # 🔥 THE MEMORY PRIMER (PRE-LOAD BUFFER) 🔥
+    # ==========================================
+    prob_buffer = deque(maxlen=10)
+
+    print("🔄 Running Primer Sequence to pre-fill the memory buffer...")
+    df_hist = fyers_load_data_live(symbol="NSE:RELIANCE-EQ", daysback=10)
+    df_hist = live_feature_engineering(df_hist)
+    X_hist_raw = df_hist[feat_cols].values
+
+    if len(X_hist_raw) < 70:
+        print(
+            "🚨 CRITICAL: Not enough historical data to prime the buffer! Need at least 70 candles."
+        )
+        sys.exit()
+
+    with torch.inference_mode():
+        # Sweep over the most recent 10 historical candles to populate the deque
+        for i in range(len(X_hist_raw) - 10, len(X_hist_raw)):
+            window = X_hist_raw[i - 59 : i + 1]  # Exact 60-candle window
+            window_3d = window.reshape(1, 60, INPUT_SIZE_1)
+            window_scaled = scale_sequences_locally(window_3d)
+            input_tensor = torch.tensor(window_scaled, dtype=torch.float32).to(device)
+            prob = torch.sigmoid(stage1_model(input_tensor)).item()
+            prob_buffer.append(prob)
+
+    print(
+        f"✅ Primer Complete. Trajectory Loaded: {[round(p, 4) for p in prob_buffer]}"
+    )
+    print("⏳ Waiting for next 15-minute interval...")
+
     CSV_FILE = "/Users/sharmanjeurkar/Projects/StockPrediction/Executables/Live_Paper_Trades.csv"
     if not os.path.exists(CSV_FILE):
         with open(CSV_FILE, mode="w", newline="") as f:
@@ -239,7 +260,6 @@ def start_trading_bot():
     while True:
         now = datetime.now()
 
-        # Check if we are at a 15-minute interval (00, 15, 30, 45)
         if now.minute % 15 == 0 and now.second < 10:
             current_time = now.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -251,18 +271,15 @@ def start_trading_bot():
                     continue
 
                 current_close = df_live["Close"].iloc[-1]
-
                 df_live = live_feature_engineering(df_live)
                 X_live_raw = df_live[feat_cols].values
 
                 with torch.inference_mode():
-                    # =============================================
-                    # STAGE 1: The Macro Scanner (60-Candle Window)
-                    # =============================================
+                    # ---------------------------------------------
+                    # STAGE 1: MACRO ORACLE
+                    # ---------------------------------------------
                     stage1_input_raw = X_live_raw[-60:]
                     stage1_input_3d = stage1_input_raw.reshape(1, 60, INPUT_SIZE_1)
-
-                    # Scale the 13 technical features locally
                     stage1_input_scaled = scale_sequences_locally(stage1_input_3d)
 
                     input_ten_1 = torch.tensor(
@@ -271,22 +288,25 @@ def start_trading_bot():
                     stage_1_output = stage1_model(input_ten_1)
                     stage_1_prob = torch.sigmoid(stage_1_output).item()
 
-                    # =============================================
-                    # 🔥 THE SNIPER'S THRESHOLD GATING 🔥
-                    # =============================================
-                    if stage_1_prob >= 0.55 or stage_1_prob <= 0.44:
-                        # STAGE 2: The Micro Sniper (10-Candle Window)
+                    # Update Memory Buffer with the new live probability
+                    prob_buffer.append(stage_1_prob)
+
+                    # ---------------------------------------------
+                    # STAGE 2: MICRO SNIPER & DUAL-KEY LOGIC
+                    # ---------------------------------------------
+                    final_signal = 0
+
+                    if len(prob_buffer) == 10 and (
+                        stage_1_prob >= UP_THRESH or stage_1_prob <= DOWN_THRESH
+                    ):
                         stage2_input_raw = X_live_raw[-10:]
                         stage2_input_3d = stage2_input_raw.reshape(1, 10, INPUT_SIZE_1)
-
-                        # Scale the 13 technical features locally (Extract back to 2D)
                         stage2_tech_scaled = scale_sequences_locally(stage2_input_3d)[0]
 
-                        # Stitch the Oracle's unscaled probability to the end of the matrix
-                        prob_col = np.full((10, 1), stage_1_prob)
+                        # Format buffer into a 10x1 vector and stitch it to the 10x13 features
+                        prob_col = np.array(prob_buffer).reshape(10, 1)
                         stage2_final_input = np.hstack((stage2_tech_scaled, prob_col))
 
-                        # Final shape is (1, 10, 14)
                         input_ten_2 = (
                             torch.tensor(stage2_final_input, dtype=torch.float32)
                             .unsqueeze(0)
@@ -295,24 +315,13 @@ def start_trading_bot():
                         stage_2_output = stage2_model(input_ten_2).item()
 
                         stage_2_prob = 1 / (1 + np.exp(-stage_2_output))
-                        stage_2_raw_pred = int(
-                            round(stage_2_prob)
-                        )  # Outputs 1 (Bull) or 0 (Bear)
+                        stage_2_raw_pred = int(round(stage_2_prob))
 
-                        # ---------------------------------------------
-                        # TRANSLATE PREDICTIONS TO TRADING SIGNALS
-                        # ---------------------------------------------
-                        if stage_1_prob >= 0.55 and stage_2_raw_pred == 1:
-                            final_signal = 1  # STRONG BUY
-                        elif stage_1_prob <= 0.44 and stage_2_raw_pred == 0:
-                            final_signal = -1  # STRONG SELL
-                        else:
-                            final_signal = 0  # VETO: Models disagree
-                    else:
-                        # Veto the trade immediately. Save brokerage fees.
-                        final_signal = 0
+                        if stage_1_prob >= UP_THRESH and stage_2_raw_pred == 1:
+                            final_signal = 1
+                        elif stage_1_prob <= DOWN_THRESH and stage_2_raw_pred == 0:
+                            final_signal = -1
 
-                # Log to CSV
                 with open(CSV_FILE, mode="a", newline="") as f:
                     writer = csv.writer(f)
                     writer.writerow(
