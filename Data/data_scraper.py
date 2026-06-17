@@ -44,7 +44,7 @@ def scrape_data(
     # End date is today
     end_date = datetime.now()
 
-    for i in range(15):
+    for i in range(4):
         # Calculate the chunk's start and end dates
         chunk_end = end_date - timedelta(days=(i * DAYS))
         chunk_start = chunk_end - timedelta(days=DAYS)
