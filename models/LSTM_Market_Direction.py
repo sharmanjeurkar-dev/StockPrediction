@@ -1,3 +1,5 @@
+import torch
+import torch.nn.functional as F
 from torch import nn
 
 
@@ -11,15 +13,21 @@ class LSTM_Market_Direction(nn.Module):
             hidden_size=hidden_units,
             batch_first=True,
         )
-        self.Dropout = nn.Dropout(p=0.2)
-        self.linear_layer = nn.Linear(
-            in_features=hidden_units, out_features=out_feautures
-        )
+        self.attention = nn.Linear(hidden_units, 1)
+
+        self.fc1 = nn.Linear(hidden_units, 32)
+        self.relu = nn.ReLU()
+        self.out = nn.Linear(32, out_feautures)
 
     def forward(self, x):
         output, _ = self.lstm_layer(x)
-        x = output[:, -1, :]
-        x = self.Dropout(x)
-        x = self.linear_layer(x)
+        attn_weights_raw = self.attention(output)
+        attn_weights = F.softmax(attn_weights_raw, dim=1)
+
+        context_weight = torch.sum(attn_weights * output, dim=1)
+
+        x = self.fc1(context_weight)
+        x = self.relu(x)
+        x = self.out(x)
 
         return x
