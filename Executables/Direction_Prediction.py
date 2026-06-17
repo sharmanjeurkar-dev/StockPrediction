@@ -41,7 +41,7 @@ from Data import Data_prep, Data_preprocessing, data_scraper
 from Data.Slider import Slider
 from models.LSTM_Market_Direction import LSTM_Market_Direction
 
-data = "NSE:INDUSINDBK-EQ"  # NSE:INDUSINDBK,NSE:TRENT-EQ,NSE:ADANIENT-EQ
+data = "NSE:TRENT-EQ"  # NSE:INDUSINDBK,NSE:TRENT-EQ,NSE:ADANIENT-EQ
 
 df_raw = data_scraper.scrape_data(symbol=data, DAYS=100, resolution="15")
 
@@ -66,7 +66,23 @@ feat_cols = [
 ]
 
 all_predictions = []
+# device setup
+device = "mps" if (torch.backends.mps.is_available()) else "cpu"
 
+# model
+INPUT_SIZE = 13
+HIDDEN_UNITS = 128
+OUT_FEATURES = 1
+
+model = LSTM_Market_Direction(
+    in_size=INPUT_SIZE, hidden_units=HIDDEN_UNITS, out_feautures=OUT_FEATURES
+).to(device=device)
+
+# loss and optimizer
+loss_fn = torch.nn.BCEWithLogitsLoss()
+optimizer = torch.optim.AdamW(model.parameters(), lr=5e-5, weight_decay=1e-4)
+
+EPOCHS = 75
 for train_df, test_df in dataframe_collection:
     # extract features and labels
     X_train_raw = train_df[feat_cols].values
@@ -106,10 +122,10 @@ for train_df, test_df in dataframe_collection:
 
     # convert numpy data to tensors
     x_train_convert, y_train_convert = Data_prep.convertNumpyToTensors(
-        x_train_clean, y_train_clean
+        x_train_clean_scaled, y_train_clean
     )
     x_test_convert, y_test_convert = Data_prep.convertNumpyToTensors(
-        x_test_clean, y_test_clean
+        x_test_clean_scaled, y_test_clean
     )
 
     # Add data to a dataset
@@ -122,23 +138,6 @@ for train_df, test_df in dataframe_collection:
         dataset=test_dataset, batch=128, num_worker=0, shuffle=False
     )
 
-    # device setup
-    device = "mps" if (torch.backends.mps.is_available()) else "cpu"
-
-    # model
-    INPUT_SIZE = 13
-    HIDDEN_UNITS = 128
-    OUT_FEATURES = 1
-
-    model = LSTM_Market_Direction(
-        in_size=INPUT_SIZE, hidden_units=HIDDEN_UNITS, out_feautures=OUT_FEATURES
-    ).to(device=device)
-
-    # loss and optimizer
-    loss_fn = torch.nn.BCEWithLogitsLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
-
-    EPOCHS = 30
     for epoch in range(EPOCHS):
         model.train()
         train_running_loss = 0.0
@@ -158,6 +157,7 @@ for train_df, test_df in dataframe_collection:
 
             optimizer.zero_grad()
             train_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
         total_train_loss = train_running_loss / len(train_data_load)
@@ -200,7 +200,7 @@ final_confidence = pd.concat(all_predictions)
 df["Stage-1-confidence"] = final_confidence
 df["Stage-1-confidence"].dropna()
 df["Stage-1-confidence"] = 1 / (1 + np.exp(-df["Stage-1-confidence"]))
-df.to_csv("indbank_with_stage1_confidence.csv", index=True)
+df.to_csv("trent_with_stage1_confidence.csv", index=True)
 print("Stage 1 Pipeline Complete! Dataset saved for Stage 2.")
 
 
@@ -270,7 +270,7 @@ def plot_metrics(model: torch.nn.Module, test_loader: torch.utils.data.DataLoade
 plot_metrics(model=model, test_loader=test_data_load)
 torch.save(
     model.state_dict(),
-    "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/INDBANK1.pt",
+    "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/TRENT1.pt",
 )
 
 print("✅ Stage 1 Model Saved!")
