@@ -1,8 +1,9 @@
 import csv
 import os
+import random  # Added for API rate-limit staggering
 import sys
+import threading
 import time
-from collections import deque
 from datetime import date, datetime, timedelta
 
 import numpy as np
@@ -22,7 +23,7 @@ from models.LSTM_Position_Detector import LSTM_Position_Detector
 # ==========================================
 # 1. AUTHENTICATION & SETUP
 # ==========================================
-env_path = "/Users/sharmanjeurkar/Projects/StockPrediction/Data/access_token.env"
+env_path = "/Users/sharmanjeurkar/Projects/SequenceAlpha/Data/access_token.env"
 
 if not os.path.exists(env_path):
     print(f"🚨 FILE NOT FOUND: The path {env_path} does not exist!")
@@ -137,7 +138,7 @@ def fyers_load_data_live(symbol="NSE:RELIANCE-EQ", resolution="15", daysback=10)
     start_date = today - timedelta(days=daysback)
     data = {
         "symbol": symbol,
-        "resolution": resolution,
+        "resolution": str(resolution),
         "date_format": "1",
         "range_from": start_date.strftime("%Y-%m-%d"),
         "range_to": today.strftime("%Y-%m-%d"),
@@ -157,28 +158,27 @@ def fyers_load_data_live(symbol="NSE:RELIANCE-EQ", resolution="15", daysback=10)
         df.set_index("Datetime", inplace=True)
         return df
     else:
-        print(f"⚠️ Error fetching data: {response}")
+        print(f"⚠️ Error fetching data for {symbol}: {response}")
         return None
 
 
 # ==========================================
 # 5. LIVE EXECUTION ENGINE
 # ==========================================
-def start_trading_bot():
+def start_trading_bot(
+    symbol, stage1_path, stage2_path, csv_file, UPTHRESHOLD, DOWNTHRESHOLD
+):
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    print(f"🚀 Starting Live Trading Engine on {device}...")
+    print(f"🚀 Starting Live Trading Engine for {symbol} on {device}...")
 
+    # Dynamic Weights Initialization
     INPUT_SIZE_1 = 13
     HIDDEN_UNITS_1 = 128
     stage1_model = LSTM_Market_Direction(
         in_size=INPUT_SIZE_1, hidden_units=HIDDEN_UNITS_1, out_feautures=1
     ).to(device)
     stage1_model.load_state_dict(
-        torch.load(
-            "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/Stage1.pt",
-            map_location=device,
-            weights_only=True,
-        )
+        torch.load(stage1_path, map_location=device, weights_only=True)
     )
     stage1_model.eval()
 
@@ -188,11 +188,7 @@ def start_trading_bot():
         in_size=INPUT_SIZE_2, hidden_units=HIDDEN_UNITS_2, out_features=1
     ).to(device)
     stage2_model.load_state_dict(
-        torch.load(
-            "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/Stage2.pt",
-            map_location=device,
-            weights_only=True,
-        )
+        torch.load(stage2_path, map_location=device, weights_only=True)
     )
     stage2_model.eval()
 
@@ -212,47 +208,22 @@ def start_trading_bot():
         "OBV-ROC",
     ]
 
-    # Grid Search Optimized Thresholds
-    UP_THRESH = 0.4531
-    DOWN_THRESH = 0.4245
-
-    # ==========================================
-    # 🔥 THE MEMORY PRIMER (PRE-LOAD BUFFER) 🔥
-    # ==========================================
-    prob_buffer = deque(maxlen=10)
-
-    print("🔄 Running Primer Sequence to pre-fill the memory buffer...")
-    df_hist = fyers_load_data_live(symbol="NSE:RELIANCE-EQ", daysback=10)
-    df_hist = live_feature_engineering(df_hist)
-    X_hist_raw = df_hist[feat_cols].values
-
-    if len(X_hist_raw) < 70:
-        print(
-            "🚨 CRITICAL: Not enough historical data to prime the buffer! Need at least 70 candles."
-        )
-        sys.exit()
-
-    with torch.inference_mode():
-        # Sweep over the most recent 10 historical candles to populate the deque
-        for i in range(len(X_hist_raw) - 10, len(X_hist_raw)):
-            window = X_hist_raw[i - 59 : i + 1]  # Exact 60-candle window
-            window_3d = window.reshape(1, 60, INPUT_SIZE_1)
-            window_scaled = scale_sequences_locally(window_3d)
-            input_tensor = torch.tensor(window_scaled, dtype=torch.float32).to(device)
-            prob = torch.sigmoid(stage1_model(input_tensor)).item()
-            prob_buffer.append(prob)
-
-    print(
-        f"✅ Primer Complete. Trajectory Loaded: {[round(p, 4) for p in prob_buffer]}"
+    CSV_FILE = os.path.join(
+        "/Users/sharmanjeurkar/Projects/SequenceAlpha/Executables", csv_file
     )
-    print("⏳ Waiting for next 15-minute interval...")
+    os.makedirs(os.path.dirname(CSV_FILE), exist_ok=True)
 
-    CSV_FILE = "/Users/sharmanjeurkar/Projects/StockPrediction/Executables/Live_Paper_Trades.csv"
     if not os.path.exists(CSV_FILE):
         with open(CSV_FILE, mode="w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(
-                ["Timestamp", "Close", "Stage1_Prob", "Risk_Manager_Signal"]
+                [
+                    "Timestamp",
+                    "Close",
+                    "Stage1_Prob",
+                    "Stage2_Raw_Logit",
+                    "Risk_Manager_Signal",
+                ]
             )
 
     last_processed_time = None
@@ -260,98 +231,197 @@ def start_trading_bot():
     while True:
         now = datetime.now()
 
-        if now.minute % 15 == 0 and now.second < 10:
-            current_time = now.strftime("%Y-%m-%d %H:%M:%S")
+        # 1. Market Hours Check (9:15 AM to 3:30 PM IST)
+        market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+        market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
 
-            if last_processed_time != current_time:
-                last_processed_time = current_time
-                df_live = fyers_load_data_live(symbol="NSE:RELIANCE-EQ")
+        if market_open <= now <= market_close:
+            # 2. 15-minute sync boundary anchor
+            if now.minute % 15 == 0 and now.second < 45:
+                # 3. API Rate-Limit Staggering
+                time.sleep(random.uniform(0.1, 2.5))
 
-                if df_live is None or df_live.empty:
-                    continue
+                current_candle_minute = now.strftime("%Y-%m-%d %H:%M")
+                try:
+                    if last_processed_time != current_candle_minute:
+                        last_processed_time = current_candle_minute
+                        df_live = fyers_load_data_live(symbol=symbol, daysback=7)
 
-                current_close = df_live["Close"].iloc[-1]
-                df_live = live_feature_engineering(df_live)
-                X_live_raw = df_live[feat_cols].values
+                        if df_live is None or df_live.empty:
+                            print(
+                                f"⚠️ [{symbol}] API returned empty data at {current_candle_minute}. Retrying in 2 seconds..."
+                            )
+                            time.sleep(2)
+                            continue
+                        last_processed_time = current_candle_minute
+                        current_close = df_live["Close"].iloc[-1]
+                        df_live = live_feature_engineering(df_live)
+                        X_live_raw = df_live[feat_cols].values
 
-                with torch.inference_mode():
-                    # ---------------------------------------------
-                    # STAGE 1: MACRO ORACLE
-                    # ---------------------------------------------
-                    stage1_input_raw = X_live_raw[-60:]
-                    stage1_input_3d = stage1_input_raw.reshape(1, 60, INPUT_SIZE_1)
-                    stage1_input_scaled = scale_sequences_locally(stage1_input_3d)
+                        # Ensure enough historical data is present for a full 60-candle window + 10-candle recent history
+                        if len(X_live_raw) < 70:
+                            print(
+                                f"⚠️ [{symbol}] Waiting for more historical data rows (Found {len(X_live_raw)}). Needs 70+."
+                            )
+                            continue
 
-                    input_ten_1 = torch.tensor(
-                        stage1_input_scaled, dtype=torch.float32
-                    ).to(device)
-                    stage_1_output = stage1_model(input_ten_1)
-                    stage_1_prob = torch.sigmoid(stage_1_output).item()
+                        with torch.inference_mode():
+                            # ---------------------------------------------
+                            # STAGE 1: STATELESS MACRO REGIME ORACLE
+                            # ---------------------------------------------
+                            recent_probs = []
+                            for i in range(len(X_live_raw) - 10, len(X_live_raw)):
+                                window = X_live_raw[i - 59 : i + 1]
+                                window_3d = window.reshape(1, 60, INPUT_SIZE_1)
+                                window_scaled = scale_sequences_locally(window_3d)
+                                input_ten_1 = torch.tensor(
+                                    window_scaled, dtype=torch.float32
+                                ).to(device)
+                                prob = torch.sigmoid(stage1_model(input_ten_1)).item()
+                                recent_probs.append(prob)
 
-                    # Update Memory Buffer with the new live probability
-                    prob_buffer.append(stage_1_prob)
+                            # The current moment's probability is the last one calculated
+                            stage_1_prob = recent_probs[-1]
 
-                    # ---------------------------------------------
-                    # STAGE 2: MICRO SNIPER & DUAL-KEY LOGIC
-                    # ---------------------------------------------
-                    final_signal = 0
+                            # ---------------------------------------------
+                            # STAGE 2: MICRO SNIPER TRIGGER
+                            # ---------------------------------------------
+                            final_signal = 0
+                            stage_2_logit = 0.0
 
-                    if len(prob_buffer) == 10 and (
-                        stage_1_prob >= UP_THRESH or stage_1_prob <= DOWN_THRESH
-                    ):
-                        stage2_input_raw = X_live_raw[-10:]
-                        stage2_input_3d = stage2_input_raw.reshape(1, 10, INPUT_SIZE_1)
-                        stage2_tech_scaled = scale_sequences_locally(stage2_input_3d)[0]
+                            if (
+                                stage_1_prob >= UPTHRESHOLD
+                                or stage_1_prob <= DOWNTHRESHOLD
+                            ):
+                                stage2_input_raw = X_live_raw[-10:]
+                                stage2_input_3d = stage2_input_raw.reshape(
+                                    1, 10, INPUT_SIZE_1
+                                )
+                                stage2_tech_scaled = scale_sequences_locally(
+                                    stage2_input_3d
+                                )[0]
 
-                        # Format buffer into a 10x1 vector and stitch it to the 10x13 features
-                        prob_col = np.array(prob_buffer).reshape(10, 1)
-                        stage2_final_input = np.hstack((stage2_tech_scaled, prob_col))
+                                prob_col = np.array(recent_probs).reshape(10, 1)
+                                stage2_final_input = np.hstack(
+                                    (stage2_tech_scaled, prob_col)
+                                )
 
-                        input_ten_2 = (
-                            torch.tensor(stage2_final_input, dtype=torch.float32)
-                            .unsqueeze(0)
-                            .to(device)
+                                input_ten_2 = (
+                                    torch.tensor(
+                                        stage2_final_input, dtype=torch.float32
+                                    )
+                                    .unsqueeze(0)
+                                    .to(device)
+                                )
+                                stage_2_logit = stage2_model(input_ten_2).item()
+
+                                # 4. Upgraded Logit confirmation barrier (> 0.5)
+                                if stage_1_prob >= UPTHRESHOLD and stage_2_logit > 0.5:
+                                    final_signal = 1
+                                elif (
+                                    stage_1_prob <= DOWNTHRESHOLD
+                                    and stage_2_logit < -0.5
+                                ):
+                                    final_signal = -1
+
+                        with open(CSV_FILE, mode="a", newline="") as f:
+                            writer = csv.writer(f)
+                            writer.writerow(
+                                [
+                                    current_candle_minute,
+                                    current_close,
+                                    round(stage_1_prob, 4),
+                                    round(stage_2_logit, 4),
+                                    final_signal,
+                                ]
+                            )
+
+                        print(
+                            f"⚡ [{symbol}] Time: {current_candle_minute} | Close: ₹{current_close:.2f}"
                         )
-                        stage_2_output = stage2_model(input_ten_2).item()
-
-                        stage_2_prob = 1 / (1 + np.exp(-stage_2_output))
-                        stage_2_raw_pred = int(round(stage_2_prob))
-
-                        if stage_1_prob >= UP_THRESH and stage_2_raw_pred == 1:
-                            final_signal = 1
-                        elif stage_1_prob <= DOWN_THRESH and stage_2_raw_pred == 0:
-                            final_signal = -1
-
-                with open(CSV_FILE, mode="a", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerow(
-                        [
-                            current_time,
-                            current_close,
-                            round(stage_1_prob, 4),
-                            final_signal,
-                        ]
-                    )
-
-                print("-" * 50)
-                print(f"⏰ Time: {current_time} | Close: ₹{current_close:.2f}")
-                print(
-                    f"🔮 Oracle Probability: {stage_1_prob:.4f} | Risk Signal: {final_signal}"
-                )
-                print("-" * 50)
-
+                        print(
+                            f"🔮 Oracle Prob: {stage_1_prob:.4f} | Sniper Logit: {stage_2_logit:.4f} | Execution Signal: {final_signal}"
+                        )
+                        print("-" * 65)
+                except Exception as e:
+                    print(f"🚨 FATAL ERROR in {symbol} Thread: {str(e)}")
+                    # Reset the lock so it tries again next candle instead of permanently dying
+                    last_processed_time = None
             time.sleep(60)
         else:
             time.sleep(1)
 
 
-if __name__ == "__main__":
-    print("Testing API Connection...")
-    test_df = fyers_load_data_live(symbol="NSE:RELIANCE-EQ")
-    if test_df is not None:
-        print(
-            f"✅ Connection Successful! Downloaded {len(test_df)} historical candles."
+# ==========================================
+# 6. ENGINE MULTI-THREAD CONTROLLER
+# ==========================================
+def run_all_bots():
+    print("Initializing SequenceAlpha Master Controller Thread Pool...")
+
+    # Complete configuration mapping with specific target thresholds matching structural behaviors
+    bots_config = [
+        {
+            "symbol": "NSE:ADANIENT-EQ",
+            "stage1_path": "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/ADANI1.pt",
+            "stage2_path": "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/ADANI2.pt",
+            "csv_file": "ADANI_ENTERPRIZES_trades.csv",
+            "UPTHRESHOLD": 0.7000,
+            "DOWNTHRESHOLD": 0.1600,
+        },
+        {
+            "symbol": "NSE:TRENT-EQ",
+            "stage1_path": "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/TRENT1.pt",
+            "stage2_path": "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/TRENT2.pt",
+            "csv_file": "TRENT_trades.csv",
+            "UPTHRESHOLD": 0.5750,
+            "DOWNTHRESHOLD": 0.1650,
+        },
+        {
+            "symbol": "NSE:INDUSINDBK-EQ",
+            "stage1_path": "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/INDBANK1.pt",
+            "stage2_path": "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/INDBANK2.pt",
+            "csv_file": "INDBANK_trades_30m.csv",
+            "UPTHRESHOLD": 0.6200,
+            "DOWNTHRESHOLD": 0.1200,
+        },
+    ]
+
+    threads = []
+
+    for config in bots_config:
+        # Verify the specific models actually exist before launching the thread
+        if not os.path.exists(config["stage1_path"]) or not os.path.exists(
+            config["stage2_path"]
+        ):
+            print(
+                f"🚨 SKIP WARNING: Missing .pt files for {config['symbol']}. Ensure Specialist models are trained."
+            )
+            continue
+
+        t = threading.Thread(
+            target=start_trading_bot,
+            args=(
+                config["symbol"],
+                config["stage1_path"],
+                config["stage2_path"],
+                config["csv_file"],
+                config["UPTHRESHOLD"],
+                config["DOWNTHRESHOLD"],
+            ),
         )
-        start_trading_bot()
+        t.start()
+        threads.append(t)
+        time.sleep(2)  # Non-throttling API cadence lock
+
+    for t in threads:
+        t.join()
+
+
+if __name__ == "__main__":
+    print("Testing Master API Infrastructure Connection...")
+    test_df = fyers_load_data_live(symbol="NSE:RELIANCE-EQ", daysback=2)
+    if test_df is not None and not test_df.empty:
+        print(f"✅ Connection Handshake Succeeded. System Hot.")
+        run_all_bots()
     else:
-        print("🚨 Fix your API Credentials before starting.")
+        print("🚨 Fix your API access_token variables before structural boot.")
