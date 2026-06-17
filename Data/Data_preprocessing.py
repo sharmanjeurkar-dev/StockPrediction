@@ -140,5 +140,4 @@ def apply_triple_barrier_labels(df: pd.DataFrame, vol_col="Daily_Vol", max_candl
                 labels[i] = -1  # Mark sideways noise for deletion
 
     df["Target"] = labels.astype(int)
-    df = df[df["Target"] != -1].copy()
     return df

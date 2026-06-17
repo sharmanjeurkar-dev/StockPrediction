@@ -1,8 +1,6 @@
 import os
 import sys
 
-import joblib
-
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, ".."))
 if project_root not in sys.path:
@@ -43,7 +41,7 @@ from Data import Data_prep, Data_preprocessing, data_scraper
 from Data.Slider import Slider
 from models.LSTM_Market_Direction import LSTM_Market_Direction
 
-data = "NSE:RELIANCE-EQ"
+data = "NSE:INDUSINDBK-EQ"  # NSE:INDUSINDBK,NSE:TRENT-EQ,NSE:ADANIENT-EQ
 
 df_raw = data_scraper.scrape_data(symbol=data, DAYS=100, resolution="15")
 
@@ -180,7 +178,7 @@ for train_df, test_df in dataframe_collection:
         total_test_loss = test_running_loss / len(test_data_load)
         test_pred = np.concat(test_pred)
 
-        look_back = 60
+        look_back = 59
 
         # 1. Get the original full timeline of sliding windows
         base_test_index = test_df.index[look_back:]
@@ -201,8 +199,8 @@ final_confidence = pd.concat(all_predictions)
 
 df["Stage-1-confidence"] = final_confidence
 df["Stage-1-confidence"].dropna()
-
-df.to_csv("NIFTY_with_stage1_confidence.csv", index=True)
+df["Stage-1-confidence"] = 1 / (1 + np.exp(-df["Stage-1-confidence"]))
+df.to_csv("indbank_with_stage1_confidence.csv", index=True)
 print("Stage 1 Pipeline Complete! Dataset saved for Stage 2.")
 
 
@@ -272,7 +270,7 @@ def plot_metrics(model: torch.nn.Module, test_loader: torch.utils.data.DataLoade
 plot_metrics(model=model, test_loader=test_data_load)
 torch.save(
     model.state_dict(),
-    "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/Stage1.pt",
+    "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/INDBANK1.pt",
 )
 
 print("✅ Stage 1 Model Saved!")
