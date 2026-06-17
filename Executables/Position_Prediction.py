@@ -1,8 +1,6 @@
 import os
 import sys
 
-import joblib
-
 script_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(script_dir, ".."))
 
@@ -47,9 +45,9 @@ from utility.DirectionalPeneltyLoss import SharpeRatio
 
 # Pulling data from Data preprocessing module which alos donwload the data for me
 df = pd.read_csv(
-    "NIFTY_with_stage1_confidence.csv", index_col="Datetime", parse_dates=True
+    "indbank_with_stage1_confidence.csv", index_col="Datetime", parse_dates=True
 )
-df["Target-Returns"] = df["Returns"].shift(-1)
+
 df.dropna(inplace=True)
 feat_cols = [
     "Time_Cos",
@@ -70,8 +68,7 @@ feat_cols = [
 
 features = df[feat_cols]
 features = features.values
-labels = df["Target-Returns"]
-labels = labels.to_numpy(dtype=float)
+labels = np.where((df["Returns"].shift(-1) + df["Returns"].shift(-2)) > 0, 1.0, 0.0)
 train_size = int(0.8 * len(features))
 
 X_train_raw = features[:train_size]
@@ -138,7 +135,7 @@ model = LSTM_Position_Detector(
 
 
 # loss funtiona and Optimizer
-loss_fn = SharpeRatio(transaction_cost=0.0003, holding_cost=0.0)
+loss_fn = nn.BCEWithLogitsLoss()
 optimizer = torch.optim.Adam(params=model.parameters(), lr=0.0001, weight_decay=1e-3)
 
 
@@ -162,7 +159,7 @@ def traintest(
 
         for x, y in loop:
             x = x.to(device)
-            y = y.to(device)
+            y = y.to(device).view(-1, 1).float()
             train_pred = model(x)
 
             train_loss = loss_fn(train_pred, y)
@@ -264,12 +261,61 @@ def plot_predictions(model: torch.nn.Module, test_loader: torch.utils.data.DataL
     plt.show()
 
 
-plot_predictions(model=model, test_loader=test_data_load)
-CalculatePNL.calculate_pnl(
-    model=model, test_loader=test_data_load, transaction_cost=0.0003
-)
+# plot_predictions(model=model, test_loader=test_data_load)
+
+from sklearn.metrics import accuracy_score, f1_score
+
+
+def evaluate_binary_classifier(
+    model: torch.nn.Module, test_loader: torch.utils.data.DataLoader, device: str
+):
+    print("\nRunning Classification Evaluation on Unseen Data...")
+    model.to(device)
+    model.eval()
+
+    all_preds = []
+    all_targets = []
+
+    with torch.no_grad():
+        for x, y in test_loader:
+            x = x.to(device)
+            y = y.to(device).view(-1, 1).float()
+
+            # 1. Get raw model outputs (logits)
+            logits = model(x)
+
+            # 2. Squash logits to probabilities (0.0 to 1.0)
+            probs = torch.sigmoid(logits)
+
+            # 3. Round to hard binary predictions (0 or 1)
+            preds = torch.round(probs)
+
+            all_preds.extend(preds.cpu().numpy())
+            all_targets.extend(y.cpu().numpy())
+
+    all_preds = np.array(all_preds).flatten()
+    all_targets = np.array(all_targets).flatten()
+
+    acc = accuracy_score(all_targets, all_preds)
+    f1 = f1_score(all_targets, all_preds, zero_division=0)
+
+    # Calculate how often the model predicts "1" (Long) vs "0" (Short)
+    buy_ratio = np.mean(all_preds) * 100
+
+    print("-" * 50)
+    print("🚀 Sniper Classification Metrics")
+    print("-" * 50)
+    print(f"✅ Accuracy:       {acc * 100:.2f}%")
+    print(f"✅ F1 Score:       {f1:.4f}")
+    print(f"📊 Buy Propensity: {buy_ratio:.2f}% (How often it triggers)")
+    print("-" * 50)
+
+
+# Run the evaluation
+evaluate_binary_classifier(model, test_data_load, device)
+
 torch.save(
     model.state_dict(),
-    "/Users/sharmanjeurkar/Projects/StockPrediction/models/saved/Stage2.pt",
+    "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/INDBANK2.pt",
 )
-print("✅ Stage 2 Model Saved!")
+print("✅ Binary Stage 2 Model Saved!")
