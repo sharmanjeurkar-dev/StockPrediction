@@ -13,4 +13,7 @@ stage2_training_logs.txt
 stage1_training_logs.txt
 models/saved/
 test/test.py
+archive/
+NIFTY_with_stage1_confidence.csv
+Outputs/Graphs
 .DS_Store 
