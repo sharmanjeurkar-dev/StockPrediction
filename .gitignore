@@ -16,4 +16,5 @@ test/test.py
 archive/
 NIFTY_with_stage1_confidence.csv
 Outputs/Graphs
+venv
 .DS_Store 

@@ -50,7 +50,7 @@ def scrape_data(
         chunk_start = chunk_end - timedelta(days=DAYS)
 
         print(
-            f"Fetching chunk {i + 1}: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}"
+            f"Fetching chunk for symbol: {symbol} {i + 1}: {chunk_start.strftime('%Y-%m-%d')} to {chunk_end.strftime('%Y-%m-%d')}"
         )
 
         data = {
@@ -80,13 +80,11 @@ def scrape_data(
 
     # Combine all the chunks together
     final_df = pd.concat(all_data, ignore_index=True)
-
+    final_df["symbol"] = symbol
     # Convert Unix timestamps to human-readable datetime
     final_df["Datetime"] = pd.to_datetime(final_df["Datetime"], unit="s")
-
     # Sort from oldest to newest
-    final_df = final_df.sort_values(by="Datetime")
-
+    final_df = final_df.sort_values(by=["symbol", "Datetime"])
     # Set Datetime as index
     final_df.set_index("Datetime", inplace=True)
 
