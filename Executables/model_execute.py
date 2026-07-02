@@ -5,6 +5,7 @@ import sys
 import lightning.pytorch as pl
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 from pytorch_forecasting.data import TorchNormalizer
 from pytorch_forecasting.metrics import QuantileLoss
@@ -185,3 +186,4 @@ plt.show()
 trainer.save_checkpoint("tft_model.ckpt")
 pickle.dump(training, open("training_dataset.pkl", "wb"))
 print("Model and dataset saved successfully")
+print(training.categorical_encoders)
