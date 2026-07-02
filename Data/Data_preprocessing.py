@@ -150,15 +150,26 @@ def concat_df(dfs: list[pd.DataFrame]) -> pd.DataFrame:
     return final_df
 
 
-def walk_forward_slices(df: pd.DataFrame):
-    year = sorted(df.index.year)
+def walk_forward_slices(
+    df: pd.DataFrame, symbol_col: str = "symbol", embargo_candles: int = 8
+):
+    years = sorted(df.index.year.unique())
     append_df = []
-    for i in range(1, len(year)):
-        train_year = year[:i]
-        train_df = df[df["Year"].isin(train_year)].copy()
+    for i in range(1, len(years)):
+        train_years = years[:i]
+        train_df = df[df.index.year.isin(train_years)].copy()
 
-        test_year = year[i]
-        test_df = df[df["Year"] == test_year]
+        if embargo_candles > 0:
+            train_df = train_df.groupby(symbol_col, group_keys=False).apply(
+                lambda g: (
+                    g.iloc[:-embargo_candles]
+                    if len(g) > embargo_candles
+                    else g.iloc[0:0]
+                )
+            )
+
+        test_year = years[i]
+        test_df = df[df.index.year == test_year].copy()
 
         append_df.append((train_df, test_df))
 
