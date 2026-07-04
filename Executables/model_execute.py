@@ -6,6 +6,7 @@ import lightning.pytorch as pl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import torch
 from lightning.pytorch.callbacks import EarlyStopping
 from pytorch_forecasting import TemporalFusionTransformer, TimeSeriesDataSet
 from pytorch_forecasting.data import TorchNormalizer
@@ -21,13 +22,20 @@ if project_root not in sys.path:
 from Data.Data_preprocessing import concat_df, walk_forward_slices
 from Data.data_scraper import scrape_data
 
+TARGET = "Target"
+GROUP = "symbol"
+TIMEIDX = "timeidx"
+DATE_COL = "date"
+MAX_ENCODER_LENGTH = 32
+MAX_PRED_LENGTH = 1
+EMBARGO_HOURS = 2
+
 df1 = scrape_data("NSE:PAYTM-EQ")  # paytm
 df2 = scrape_data("NSE:TCS-EQ")  # tcs
 df3 = scrape_data("NSE:HINDUNILVR-EQ")  # Hindustan Unilever
 
 df_raw = [df1, df2, df3]
 df = concat_df(df_raw)
-
 df = df.sort_values(by=["symbol", "Datetime"])
 df["timeidx"] = df.groupby("symbol").cumcount()
 df = df.reset_index()
@@ -64,13 +72,12 @@ weights_full = np.where(
 
 
 def rebuild_time_idx(df, symbol_col="symbol"):
-    df = df.sort([symbol_col, df.index or "index"])
+    df = df.sort_values([symbol_col, "Datetime"])
     df["timeidx"] = df.groupby(symbol_col).cumcount()
     return df
 
 
 def build_dataset(train_df, test_df):
-    # timeseries dataset
     training = TimeSeriesDataSet(
         train_df,
         time_idx="timeidx",
@@ -103,10 +110,18 @@ def build_dataset(train_df, test_df):
     )
 
     dataset_indices = training.index["index_start"].values
-    weights_aligned = weights_full[dataset_indices]
+    target_tensor = training.data["target"][0]
+    target_values = target_tensor[dataset_indices].numpy().reshape(-1)
+
+    labels = (target_values != 0.0).astype(int)
+    class_counts = np.bincount(labels, minlength=2)
+    class_weights = 1.0 / np.maximum(class_counts, 1)
+    weights_aligned = class_weights[labels]
 
     sampler = WeightedRandomSampler(
-        weights=weights_aligned, num_samples=len(training), replacement=True
+        weights=torch.DoubleTensor(weights_aligned),
+        num_samples=len(training),
+        replacement=True,
     )
 
     train_dataloader = training.to_dataloader(
@@ -141,13 +156,16 @@ def model_and_trainer_setup(training: TimeSeriesDataSet):
         enable_checkpointing=False,
         enable_progress_bar=True,
     )
+    print(training.static_categoricals)
+    print(train_df["symbol"].dtype)
+    print(train_df["symbol"].unique())
     return model, trainer
 
 
 def compute_fold_metrics(model, val_dl, validation_dataset, test_df, fold_id):
     raw_preds = model.predict(val_dl, mode="quantiles", return_index=True)
-    preds, index_df = raw_preds
-
+    preds = raw_preds.output
+    index_df = raw_preds.index
     quantiles = model.loss.quantiles
     p10_idx = quantiles.index(min(quantiles, key=lambda q: abs(q - 0.1)))
     p50_idx = quantiles.index(min(quantiles, key=lambda q: abs(q - 0.5)))
@@ -248,7 +266,9 @@ def plot_model_output(model, validation_dataloader):
 
 
 # WalkForward Slicing for training and Out of sample Validation
-df_acc_folds = walk_forward_slices(df=df, symbol_col="symbol", embargo_candles=8)
+df_acc_folds = walk_forward_slices(
+    df=df, symbol_col="symbol", date_col="Datetime", embargo_candles=8
+)
 
 results = []
 for i, (train_df, test_df) in enumerate(df_acc_folds):
@@ -276,19 +296,24 @@ for i, (train_df, test_df) in enumerate(df_acc_folds):
     trainer.save_checkpoint(
         f"/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/model_fold_{i}"
     )
-    print("\n\n\n=" * 50)
+    print("\n\n\n")
+    print("*" * 50)
     print(metrics)
-    print("\n\n\n=" * 50)
+    print("*" * 50)
+    print("\n\n\n")
 
 results_df = pd.DataFrame(results)
-print("\n\n=" * 50)
+
+print("-" * 50)
+print("\n\n")
 print(results_df)
 print("Mean IC:", results_df["ic"].mean(), "Std IC:", results_df["ic"].std())
-print("\n\n=" * 50)
+print("\n\n")
+print("-" * 50)
 trainer.save_checkpoint(
     "/Users/sharmanjeurkar/Projects/SequenceAlpha/models/saved/tft_model.ckpt"
 )
 
+plot_model_output(model=model, validation_dataloader=validation_dataloader)
 pickle.dump(training, open("training_dataset.pkl", "wb"))
 print("Model and dataset saved successfully")
-print(training.categorical_encoders)

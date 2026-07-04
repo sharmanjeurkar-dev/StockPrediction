@@ -144,6 +144,7 @@ def concat_df(dfs: list[pd.DataFrame]) -> pd.DataFrame:
     for df in dfs:
         symbol = df["symbol"].iloc[0]
         df_processed = feature_enginiering(df, symbol)
+        df_processed["symbol"] = symbol
         processed.append(df_processed)
 
     final_df = pd.concat(processed, ignore_index=False)
@@ -151,26 +152,27 @@ def concat_df(dfs: list[pd.DataFrame]) -> pd.DataFrame:
 
 
 def walk_forward_slices(
-    df: pd.DataFrame, symbol_col: str = "symbol", embargo_candles: int = 8
+    df: pd.DataFrame,
+    date_col: str = "Datetime",
+    symbol_col: str = "symbol",
+    embargo_candles: int = 8,
 ):
-    years = sorted(df.index.year.unique())
+    df = df.copy()
+    df[date_col] = pd.to_datetime(df[date_col])
+    years = sorted(df[date_col].dt.year.unique())
     append_df = []
+
     for i in range(1, len(years)):
         train_years = years[:i]
-        train_df = df[df.index.year.isin(train_years)].copy()
+        train_df = df[df[date_col].dt.year.isin(train_years)].copy()
 
         if embargo_candles > 0:
-            train_df = train_df.groupby(symbol_col, group_keys=False).apply(
-                lambda g: (
-                    g.iloc[:-embargo_candles]
-                    if len(g) > embargo_candles
-                    else g.iloc[0:0]
-                )
-            )
+            train_df = train_df.sort_values([symbol_col, date_col])
+            row_rank_desc = train_df.groupby(symbol_col).cumcount(ascending=False)
+            train_df = train_df[row_rank_desc >= embargo_candles]
 
         test_year = years[i]
-        test_df = df[df.index.year == test_year].copy()
-
+        test_df = df[df[date_col].dt.year == test_year].copy()
         append_df.append((train_df, test_df))
 
     return append_df
