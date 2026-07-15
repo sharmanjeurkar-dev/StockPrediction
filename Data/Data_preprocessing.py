@@ -2,17 +2,17 @@ import numpy as np
 import pandas as pd
 
 
-def feature_enginiering(df: pd.DataFrame):
-
+def feature_enginiering(df: pd.DataFrame, symbol):
+    df["symbol"] = symbol
     df.sort_index(inplace=True)
     df = df.loc[~df.index.duplicated(keep="first")].copy()
     # Calculating the %returns on close price if the share was brought
     df["Returns"] = df["Close"].pct_change()
 
-    # z -score
-    df["Z-score-close"] = (df["Close"] - df["Close"].rolling(window=20).mean()) / df[
-        "Close"
-    ].rolling(window=20).std()
+    # # z -score
+    # df["Z-score-close"] = (df["Close"] - df["Close"].rolling(window=20).mean()) / df[
+    #     "Close"
+    # ].rolling(window=20).std()
 
     # RSI score
     df["Change"] = df["Close"].diff()
@@ -33,6 +33,7 @@ def feature_enginiering(df: pd.DataFrame):
     df["MACD-Line"] = df["EMA-Today-close-12D"] - df["EMA-Today-close-26D"]
     df["Single-Line"] = df["MACD-Line"].ewm(span=9, adjust=False).mean()
     df["MACD-Histogram"] = df["MACD-Line"] - df["Single-Line"]
+    df.drop(columns=["EMA-Today-close-26D", "EMA-Today-close-12D"], inplace=True)
 
     # Bollinger Bandwidth
     df["Middle-Band"] = df["Close"].rolling(window=20).mean()
@@ -46,9 +47,9 @@ def feature_enginiering(df: pd.DataFrame):
         df["Upper-Band"] - df["Lower-Band"]
     )
     df["Intraday_Spread"] = (df["High"] - df["Low"]) / df["Close"]
-    df["Volume_Price_Velocity"] = df["Returns"] * (
-        df["Volume"] / df["Volume"].rolling(20).mean()
-    )
+    # df["Volume_Price_Velocity"] = df["Returns"] * (
+    #     df["Volume"] / df["Volume"].rolling(20).mean()
+    # )
 
     # On-Balance Volume (OBV)
     condition = [(df["Change"] > 0), (df["Change"] < 0)]
@@ -70,8 +71,8 @@ def feature_enginiering(df: pd.DataFrame):
     df["atr-l"] = df["true_range"].rolling(window=50).mean()
 
     df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
+    df.drop(columns=["high_low", "high_prev_close", "low_prev_close"], inplace=True)
 
-    df["Year"] = df.index.year
     minutes_elapsed = (df.index.hour * 60 + df.index.minute) - 555
     time_fraction = np.clip(minutes_elapsed / 375.0, 0.0, 1.0)
     df["Time_Sin"] = np.sin(time_fraction * 2 * np.pi)
@@ -79,35 +80,25 @@ def feature_enginiering(df: pd.DataFrame):
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     df["Daily_Vol"] = df["Close"].pct_change().rolling(window=25).std()
-    df = apply_triple_barrier_labels(df, vol_col="Daily_Vol", max_candles=15)
+    df = apply_triple_barrier_labels(df, vol_col="Daily_Vol", max_candles=8)
+
+    df["MA-20"] = df["Close"].rolling(window=20).mean()
+    df["MA-50"] = df["Close"].rolling(window=50).mean()
+    df["MA-Cross"] = (df["MA-20"] - df["MA-50"]) / df["MA-50"]
+
     df.dropna(inplace=True)
 
     return df
 
 
-def walk_forward_slices(df: pd.DataFrame):
-    year = sorted(df["Year"].unique())
-    append_df = []
-    for i in range(1, len(year)):
-        train_year = year[:i]
-        train_df = df[df["Year"].isin(train_year)].copy()
-
-        test_year = year[i]
-        test_df = df[df["Year"] == test_year]
-
-        append_df.append((train_df, test_df))
-
-    return append_df
-
-
-def apply_triple_barrier_labels(df: pd.DataFrame, vol_col="Daily_Vol", max_candles=20):
+def apply_triple_barrier_labels(df: pd.DataFrame, vol_col="Daily_Vol", max_candles=8):
 
     close = df["Close"].values
     high = df["High"].values
     low = df["Low"].values
     vol = df[vol_col].values
 
-    labels = np.zeros(len(df))
+    returns = np.zeros(len(df))
 
     for i in range(len(df) - max_candles):
         entry_price = close[i]
@@ -115,30 +106,73 @@ def apply_triple_barrier_labels(df: pd.DataFrame, vol_col="Daily_Vol", max_candl
 
         # Handle early rows where rolling volatility is still NaN or Zero
         if np.isnan(current_vol) or current_vol == 0:
-            labels[i] = -1  # Mark for deletion
+            returns[i] = -1  # inmvalid data for traing and validations
             continue
 
-        # Dynamically scale barriers: 2.0x vol for Profit, 1.5x vol for Stop Loss
-        upper_barrier = entry_price * (1 + (3 * current_vol))
-        lower_barrier = entry_price * (1 - (3 * current_vol))
+        # Dynamically scale barriers: 2.0x vol for Profit, 2.0x vol for Stop Loss
+        upper_barrier = entry_price * (1 + (1.5 * current_vol))
+        lower_barrier = entry_price * (1 - (1.0 * current_vol))
 
         for j in range(1, max_candles + 1):
             future_idx = i + j
 
-            # 1. Check Upper Barrier (Profit Target hit first)
+            #  Check Upper Barrier (Profit Target hit first)
             if high[future_idx] >= upper_barrier:
-                labels[i] = 1  # Bullish Breakout
+                returns[i] = (
+                    high[future_idx] - entry_price
+                ) / entry_price  # Bullish Breakout - positive
                 break
 
-            # 2. Check Lower Barrier (Stop Loss hit first)
+            # Check Lower Barrier (Stop Loss hit first)
             elif low[future_idx] <= lower_barrier:
-                labels[i] = 0  # Bearish Breakdown
+                returns[i] = (
+                    high[future_idx] - entry_price
+                ) / entry_price  # Bearish Breakdown
                 break
 
-            # 3. Vertical Time Barrier: Sideways Chop
+            #  Vertical Time Barrier: Sideways Chop
             if j == max_candles:
-                labels[i] = -1  # Mark sideways noise for deletion
+                returns[i] = 0.0  # Mark sideways noise
 
-    df["Target"] = labels.astype(int)
-    df = df[df["Target"] != -1].copy()
+    df["Target"] = returns
     return df
+
+
+def concat_df(dfs: list[pd.DataFrame]) -> pd.DataFrame:
+    processed = []
+
+    for df in dfs:
+        symbol = df["symbol"].iloc[0]
+        df_processed = feature_enginiering(df, symbol)
+        df_processed["symbol"] = symbol
+        processed.append(df_processed)
+
+    final_df = pd.concat(processed, ignore_index=False)
+    return final_df
+
+
+def walk_forward_slices(
+    df: pd.DataFrame,
+    date_col: str = "Datetime",
+    symbol_col: str = "symbol",
+    embargo_candles: int = 8,
+):
+    df = df.copy()
+    df[date_col] = pd.to_datetime(df[date_col])
+    years = sorted(df[date_col].dt.year.unique())
+    append_df = []
+
+    for i in range(1, len(years)):
+        train_years = years[:i]
+        train_df = df[df[date_col].dt.year.isin(train_years)].copy()
+
+        if embargo_candles > 0:
+            train_df = train_df.sort_values([symbol_col, date_col])
+            row_rank_desc = train_df.groupby(symbol_col).cumcount(ascending=False)
+            train_df = train_df[row_rank_desc >= embargo_candles]
+
+        test_year = years[i]
+        test_df = df[df[date_col].dt.year == test_year].copy()
+        append_df.append((train_df, test_df))
+
+    return append_df
