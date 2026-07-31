@@ -1,4 +1,5 @@
 Data/__pycache__
+Data/broker_data/broker_exceptions/__pycache__
 models/__pycache__
 utility/__pycache__
 notebooks/kernel-metadata.json
