@@ -506,60 +506,125 @@ class FyersBrocker(BrockerInterface):
         return realized_pnl
 
     def get_order_book(self) -> list[dict]:
+        try:
+            response = self.fyers.orderbook()
+        except Exception as e:
+            print(f"Failed to retrive orderbook: {e}")
+            raise
 
-    try:
-        response = self.fyers.orderbook()
-    except Exception as e:
-        print(f"Failed to retrive orderbook: {e}")
-        raise
+        if not response or response.get("s") != "ok":
+            raise ValueError("Failed to retrive orderbook")
 
-    if not response or response.get('s') != 'ok':
-        raise ValueError("Failed to retrive orderbook")
+        orders = response.get("orderBook", [])
+        order_book = []
 
-    orders = response.get('orderBook', [])
-    order_book = []
+        for o in orders:
+            order_id = o.get("id")
+            mapping_warnings = []
 
-    for o in orders:
-        order_id = o.get('id')
-        mapping_warnings = []
+            fyers_side = o.get("side")
+            mapped_side = _SIDE_MAP_REVERSE.get(fyers_side)
+            if mapped_side is None:
+                mapping_warnings.append(f"unrecognized side code: {fyers_side}")
 
-        fyers_side = o.get("side")
-        mapped_side = _SIDE_MAP_REVERSE.get(fyers_side)
-        if mapped_side is None:
-            mapping_warnings.append(f"unrecognized side code: {fyers_side}")
+            fyers_status = o.get("status")
+            mapped_status = _ORDER_STATUS_MAP_REVERSE.get(fyers_status)
+            if mapped_status is None:
+                mapping_warnings.append(f"unrecognized order status: {fyers_status}")
 
-        fyers_status = o.get('status')
-        mapped_status = _ORDER_STATUS_MAP_REVERSE.get(fyers_status)
-        if mapped_status is None:
-            mapping_warnings.append(f"unrecognized order status: {fyers_status}")
+            fyers_product_type = o.get("productType")
+            mapped_product = _PRODUCT_TYPE_MAP_REVERSE.get(fyers_product_type)
+            if mapped_product is None:
+                mapping_warnings.append(
+                    f"unrecognized product type: {fyers_product_type}"
+                )
 
-        fyers_product_type = o.get('productType')
-        mapped_product = _PRODUCT_TYPE_MAP_REVERSE.get(fyers_product_type)
-        if mapped_product is None:
-            mapping_warnings.append(f"unrecognized product type: {fyers_product_type}")
+            fyers_type = o.get("type")
+            mapped_type = _ORDER_TYPE_MAP_REVERSE.get(fyers_type)
+            if mapped_type is None:
+                mapping_warnings.append(f"unrecognized order type: {fyers_type}")
 
-        fyers_type = o.get('type')
-        mapped_type = _ORDER_TYPE_MAP_REVERSE.get(fyers_type)
-        if mapped_type is None:
-            mapping_warnings.append(f"unrecognized order type: {fyers_type}")
+            if mapping_warnings:
+                print(f"Order {order_id} has mapping issues: {mapping_warnings}")
 
-        if mapping_warnings:
-            print(f"Order {order_id} has mapping issues: {mapping_warnings}")
+            order_book.append(
+                {
+                    "id": order_id,
+                    "symbol": o.get("symbol"),
+                    "side": mapped_side,
+                    "type": mapped_type,
+                    "status": mapped_status,
+                    "qty": o.get("qty"),
+                    "filledQty": o.get("filledQty"),
+                    "limitPrice": o.get("limitPrice"),
+                    "stopPrice": o.get("stopPrice"),
+                    "tradedPrice": o.get("tradedPrice"),
+                    "orderDateTime": o.get("orderDateTime"),
+                    "productType": mapped_product,
+                    "mapping_warnings": mapping_warnings,
+                }
+            )
 
-        order_book.append({
-            'id': order_id,
-            'symbol': o.get('symbol'),
-            'side': mapped_side,
-            'type': mapped_type,
-            'status': mapped_status,
-            'qty': o.get('qty'),
-            'filledQty': o.get('filledQty'),
-            'limitPrice': o.get('limitPrice'),
-            'stopPrice': o.get('stopPrice'),
-            'tradedPrice': o.get('tradedPrice'),
-            'orderDateTime': o.get('orderDateTime'),
-            'productType': mapped_product,
-            'mapping_warnings': mapping_warnings,
-        })
+        return order_book
 
-    return order_book
+    def get_trade_book(self) -> list[dict]:
+        try:
+            response = self.fyers.tradebook()
+        except Exception as e:
+            print(f"Failed to retrive tradebook: {e}")
+            raise
+
+        if not response or response.get("s") != "ok":
+            raise ValueError("Failed to retrive tradebook")
+
+        tradebooks = response.get("tradeBook", [])
+        tradebook = []
+
+        for t in tradebooks:
+            order_id = t.get("id")
+            mapping_warnings = []
+
+            fyers_side = t.get("side")
+            mapped_side = _SIDE_MAP_REVERSE.get(fyers_side)
+            if mapped_side is None:
+                mapping_warnings.append(f"unrecognized side code: {fyers_side}")
+
+            fyers_status = t.get("status")
+            mapped_status = _ORDER_STATUS_MAP_REVERSE.get(fyers_status)
+            if mapped_status is None:
+                mapping_warnings.append(f"unrecognized order status: {fyers_status}")
+
+            fyers_product_type = t.get("productType")
+            mapped_product = _PRODUCT_TYPE_MAP_REVERSE.get(fyers_product_type)
+            if mapped_product is None:
+                mapping_warnings.append(
+                    f"unrecognized product type: {fyers_product_type}"
+                )
+
+            fyers_type = t.get("type")
+            mapped_type = _ORDER_TYPE_MAP_REVERSE.get(fyers_type)
+            if mapped_type is None:
+                mapping_warnings.append(f"unrecognized order type: {fyers_type}")
+
+            if mapping_warnings:
+                print(f"Order {order_id} has mapping issues: {mapping_warnings}")
+
+            tradebook.append(
+                {
+                    "id": order_id,
+                    "symbol": t.get("symbol"),
+                    "side": mapped_side,
+                    "type": mapped_type,
+                    "status": mapped_status,
+                    "qty": t.get("qty"),
+                    "filledQty": t.get("filledQty"),
+                    "limitPrice": t.get("limitPrice"),
+                    "stopPrice": t.get("stopPrice"),
+                    "tradedPrice": t.get("tradedPrice"),
+                    "orderDateTime": t.get("orderDateTime"),
+                    "productType": mapped_product,
+                    "mapping_warnings": mapping_warnings,
+                }
+            )
+
+        return tradebook
