@@ -105,9 +105,8 @@ class FyersBrocker(BrockerInterface):
             )
 
     # scrape historical data
-    def scrape_data(self, symbol, resolution, DAYS) -> pd.DataFrame:
+    def scrape_data(self, symbol, resolution, DAYS, total_chunks=1) -> pd.DataFrame:
         all_data = []
-        total_chunks = 15
         failed_chunks = []
         MAX_RETRIES = 5
         RETRY_DELAY_SECOND = 2
