@@ -105,15 +105,16 @@ class FyersBrocker(BrockerInterface):
             )
 
     # scrape historical data
-    def scrape_data(self, symbol, resolution, DAYS, total_chunks=1) -> pd.DataFrame:
+    def scrape_data(
+        self, symbol, resolution, DAYS, end_date: datetime | None, total_chunks=1
+    ) -> pd.DataFrame | None:
         all_data = []
         failed_chunks = []
         MAX_RETRIES = 5
         RETRY_DELAY_SECOND = 2
 
-        # End date is today
-        end_date = datetime.now()
-
+        if end_date is None:
+            end_date = datetime.now()
         for i in range(total_chunks):
             # Calculate the chunk's start and end dates
             chunk_end = end_date - timedelta(days=(i * DAYS))
@@ -627,3 +628,24 @@ class FyersBrocker(BrockerInterface):
             )
 
         return tradebook
+
+
+def get_recent_history(
+    self,
+    symbol: str,
+    as_of_date,
+    lookback_days: int = 90,
+) -> pd.DataFrame | None:
+    if as_of_date is not None:
+        end_date = datetime.strptime(as_of_date, "%Y-%m-%d")
+
+    try:
+        data = self.scrape_data(
+            symbol=symbol, resolution="1D", DAYS=lookback_days, end_date=end_date
+        )
+        return data
+    except Exception as e:
+        print(
+            f"Failed to load the data for the given symbol and time period with error:\n {e}"
+        )
+        return None
