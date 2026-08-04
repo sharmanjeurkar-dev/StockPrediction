@@ -629,23 +629,22 @@ class FyersBrocker(BrockerInterface):
 
         return tradebook
 
+    def get_recent_history(
+        self,
+        symbol: str,
+        as_of_date,
+        lookback_days: int = 90,
+    ) -> pd.DataFrame | None:
+        if as_of_date is not None:
+            end_date = datetime.strptime(as_of_date, "%Y-%m-%d")
 
-def get_recent_history(
-    self,
-    symbol: str,
-    as_of_date,
-    lookback_days: int = 90,
-) -> pd.DataFrame | None:
-    if as_of_date is not None:
-        end_date = datetime.strptime(as_of_date, "%Y-%m-%d")
-
-    try:
-        data = self.scrape_data(
-            symbol=symbol, resolution="1D", DAYS=lookback_days, end_date=end_date
-        )
-        return data
-    except Exception as e:
-        print(
-            f"Failed to load the data for the given symbol and time period with error:\n {e}"
-        )
-        return None
+        try:
+            data = self.scrape_data(
+                symbol=symbol, resolution="1D", DAYS=lookback_days, end_date=end_date
+            )
+            return data
+        except Exception as e:
+            print(
+                f"Failed to load the data for the given symbol and time period with error:\n {e}"
+            )
+            return None
