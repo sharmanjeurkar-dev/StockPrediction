@@ -51,7 +51,7 @@ def screener(
 
     snapshot = pd.DataFrame(
         {
-            "Symbols": successfull_symbols,
+            "symbols": successfull_symbols,
             "avg_traded_value": avg_traded_value_list,
             "actual_trading_days": actual_trading_days_list,
             "look_back_window": lookback_days_list,
