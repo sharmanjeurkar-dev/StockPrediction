@@ -12,57 +12,121 @@ def apply_triple_barrier_labels(
     high_col: str = "High",
     low_col: str = "Low",
 ) -> pd.DataFrame:
-
+    n = len(df)
     close = df[price_close].values
     high = df[high_col].values
     low = df[low_col].values
     vol = df[vol_col].values
 
-    returns = np.zeros(len(df))
+    upper_barrier = close * (1 + (profit_mult * vol))
+    lower_barrier = close * (1 - (stop_mult * vol))
 
-    for i in range(len(df) - max_days):
-        entry_price = close[i]
-        current_vol = vol[i]
+    upper_touch_day, lower_touch_day = compute_touch_days(
+        high, low, upper_barrier, lower_barrier, max_days
+    )
 
-        # Handle early rows where rolling volatility is still NaN or Zero
-        if np.isnan(current_vol) or current_vol == 0:
-            returns[i] = np.nan  # inmvalid data for traing and validations
-            continue
+    full_window_mask = (np.arange(n) + max_days) < n
 
-        # Dynamically scale barriers: 2.0x vol for Profit, 2.0x vol for Stop Loss
-        upper_barrier = entry_price * (1 + (profit_mult * current_vol))
-        lower_barrier = entry_price * (1 - (stop_mult * current_vol))
+    upper_hit = ~np.isnan(upper_touch_day) & full_window_mask
+    lower_hit = ~np.isnan(lower_touch_day) & full_window_mask
 
-        for j in range(1, max_days + 1):
-            future_idx = i + j
+    collision_mask = upper_hit & lower_hit & (upper_touch_day == lower_touch_day)
+    upper_wins_mask = (
+        upper_hit & (~lower_hit | (upper_touch_day < lower_touch_day)) & ~collision_mask
+    )
+    lower_wins_mask = (
+        lower_hit & (~upper_hit | (lower_touch_day < upper_touch_day)) & ~collision_mask
+    )
+    neither_hit_mask = ~upper_hit & ~lower_hit & full_window_mask
 
-            # check if both the barriers hit
-            if high[future_idx] >= upper_barrier and low[future_idx] <= lower_barrier:
-                returns[i] = (
-                    low[future_idx] - entry_price
-                ) / entry_price  # Bearish Breakdown overirght returns
-                break
+    returns = np.full(n, np.nan)
 
-            #  Check Upper Barrier (Profit Target hit first)
-            elif high[future_idx] >= upper_barrier:
-                returns[i] = (
-                    high[future_idx] - entry_price
-                ) / entry_price  # Bullish Breakout - positive
-                break
+    def _price_on_touch_day(price_array, touch_day):
+        result = np.full(n, np.nan)
+        valid_rows = ~np.isnan(touch_day)
+        idx = np.arange(n)[valid_rows]
+        offsets = touch_day[valid_rows].astype(int)
+        result[valid_rows] = price_array[idx + offsets]
+        return result
 
-            # Check Lower Barrier (Stop Loss hit first)
-            elif low[future_idx] <= lower_barrier:
-                returns[i] = (
-                    low[future_idx] - entry_price
-                ) / entry_price  # Bearish Breakdown
-                break
+    high_on_upper_touch = _price_on_touch_day(high, upper_touch_day)
+    low_on_lower_touch = _price_on_touch_day(low, lower_touch_day)
 
-            #  Vertical Time Barrier: Sideways Chop
-            if j == max_days:
-                returns[i] = close[i + max_days] - entry_price  # Mark sideways noise
+    returns[collision_mask] = (
+        low_on_lower_touch[collision_mask] - close[collision_mask]
+    ) / close[collision_mask]
 
-    df["Target"] = returns
-    return df
+    returns[upper_wins_mask] = (
+        high_on_upper_touch[upper_wins_mask] - close[upper_wins_mask]
+    ) / close[upper_wins_mask]
+
+    returns[lower_wins_mask] = (
+        low_on_lower_touch[lower_wins_mask] - close[lower_wins_mask]
+    ) / close[lower_wins_mask]
+
+    vertical_idx = np.arange(n)
+    vertical_valid = neither_hit_mask & (vertical_idx + max_days < n)
+    returns[vertical_valid] = (
+        close[vertical_idx[vertical_valid] + max_days] - close[vertical_valid]
+    ) / close[vertical_valid]  # type: ignore
+
+    invalid_vol_mask = np.isnan(vol) | (vol <= 0)  # type: ignore
+    returns[invalid_vol_mask] = np.nan
+
+    out = df.copy()
+    out["Target"] = returns
+    return out
+
+
+def _first_touch_day(condition_matrix: np.ndarray) -> np.ndarray:
+    """
+    condition_matrix: shape (n_rows, max_days), boolean.
+    condition_matrix[i, j] = True if the barrier was touched on day (j+1)
+    looking forward from row i.
+
+    Returns: array of shape (n_rows,) with the 1-indexed day of first touch,
+    or np.nan if never touched within the window.
+    """
+    touched_at_all = condition_matrix.any(axis=1)
+    # argmax finds the position of the first True (True=1 beats False=0);
+    # if a row is all False, argmax returns 0, which is meaningless --
+    # that's exactly why we mask it with touched_at_all right after.
+    first_touch_idx = condition_matrix.argmax(axis=1)
+    first_touch_day = first_touch_idx + 1  # convert to 1-indexed day offset
+
+    result = np.where(touched_at_all, first_touch_day, np.nan)
+    return result
+
+
+def compute_touch_days(
+    high: np.ndarray,
+    low: np.ndarray,
+    upper_barrier: np.ndarray,
+    lower_barrier: np.ndarray,
+    max_days: int,
+):
+    n = len(high)
+
+    # Build the (n_rows, max_days) shifted-comparison matrices.
+    # Column j (0-indexed) = "touched on day j+1 from now".
+    upper_matrix = np.full((n, max_days), False)
+    lower_matrix = np.full((n, max_days), False)
+
+    for j in range(1, max_days + 1):
+        shifted_high = np.roll(high, -j)
+        shifted_low = np.roll(low, -j)
+
+        # rows near the end don't have j days of real future data --
+        # np.roll wraps around, which would be wrong, so mask those out
+        valid = np.arange(n) < (n - j)
+
+        upper_matrix[:, j - 1] = valid & (shifted_high >= upper_barrier)
+        lower_matrix[:, j - 1] = valid & (shifted_low <= lower_barrier)
+
+    upper_touch_day = _first_touch_day(upper_matrix)
+    lower_touch_day = _first_touch_day(lower_matrix)
+
+    return upper_touch_day, lower_touch_day
 
 
 def symbolwiseLabeling(
