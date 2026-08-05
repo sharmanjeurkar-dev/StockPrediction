@@ -15,37 +15,13 @@ def feature_enginiering(df: pd.DataFrame, symbol) -> pd.DataFrame:
     df["Gain"] = np.where(df["Change"] > 0, df["Change"], 0)
     df["Loss"] = np.where(df["Change"] < 0, abs(df["Change"]), 0)
 
-    df["Avg_Gain"] = df["Gain"].rolling(window=14).mean()
-    df["Avg_Loss"] = df["Loss"].rolling(window=14).mean()
+    df["Avg_Gain"] = df["Gain"].ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    df["Avg_Loss"] = df["Loss"].ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
 
     df["Rs"] = df["Avg_Gain"] / df["Avg_Loss"]
     df["RSI-close-score"] = 100 - 100 / (1 + df["Rs"])
 
-    # EMA Sscores for different windows
-    df["EMA-Today-close-26D"] = df["Close"].ewm(span=26, adjust=False).mean()
-    df["EMA-Today-close-12D"] = df["Close"].ewm(span=12, adjust=False).mean()
-
-    # MACD Scores
-    df["MACD-Line"] = df["EMA-Today-close-12D"] - df["EMA-Today-close-26D"]
-    df["Single-Line"] = df["MACD-Line"].ewm(span=9, adjust=False).mean()
-    df["MACD-Histogram"] = df["MACD-Line"] - df["Single-Line"]
-    df.drop(columns=["EMA-Today-close-26D", "EMA-Today-close-12D"], inplace=True)
-
-    # Bollinger Bandwidth
-    df["Middle-Band"] = df["Close"].rolling(window=20).mean()
-    df["Upper-Band"] = df["Middle-Band"] + 2 * df["Close"].rolling(window=20).std()
-    df["Lower-Band"] = df["Middle-Band"] - 2 * df["Close"].rolling(window=20).std()
-
-    df["Bollinger-Bandwidth"] = (df["Upper-Band"] - df["Lower-Band"]) / df[
-        "Middle-Band"
-    ]
-    df["%-Band"] = (df["Close"] - df["Lower-Band"]) / (
-        df["Upper-Band"] - df["Lower-Band"]
-    )
     df["Intraday_Spread"] = (df["High"] - df["Low"]) / df["Close"]
-    # df["Volume_Price_Velocity"] = df["Returns"] * (
-    #     df["Volume"] / df["Volume"].rolling(20).mean()
-    # )
 
     # On-Balance Volume (OBV)
     condition = [(df["Change"] > 0), (df["Change"] < 0)]
@@ -69,17 +45,22 @@ def feature_enginiering(df: pd.DataFrame, symbol) -> pd.DataFrame:
     df["ATR-Ratio"] = df["atr-s"] / df["atr-l"]
     df.drop(columns=["high_low", "high_prev_close", "low_prev_close"], inplace=True)
 
-    minutes_elapsed = (df.index.hour * 60 + df.index.minute) - 555
-    time_fraction = np.clip(minutes_elapsed / 375.0, 0.0, 1.0)
-    df["Time_Sin"] = np.sin(time_fraction * 2 * np.pi)
-    df["Time_Cos"] = np.cos(time_fraction * 2 * np.pi)
     df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
     df["Daily_Vol"] = df["Close"].pct_change().rolling(window=25).std()
 
     df["MA-20"] = df["Close"].rolling(window=20).mean()
     df["MA-50"] = df["Close"].rolling(window=50).mean()
+    df["MA-200"] = df["Close"].rolling(window=200).mean()
     df["MA-Cross"] = (df["MA-20"] - df["MA-50"]) / df["MA-50"]
+
+    # VWAP
+    rolling_vwap = (df["Close"] * df["Volume"]).rolling(window=20).sum() / df[
+        "Volume"
+    ].rolling(window=20).sum()
+    df["VWAP-20D-Dist"] = (df["Close"] - rolling_vwap) / rolling_vwap
+
+    df.drop(columns=["OBV"], inplace=True)
 
     df.dropna(inplace=True)
 

@@ -20,7 +20,8 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 from Data.Data_preprocessing import concat_df, walk_forward_slices
-from Data.data_scraper import scrape_data
+
+from archive.data_scraper import scrape_data
 
 TARGET = "Target"
 GROUP = "symbol"
