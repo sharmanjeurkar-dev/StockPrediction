@@ -3,9 +3,12 @@ from abc import ABC, abstractmethod
 
 import pandas as pd
 from dotenv import load_dotenv
-from enums import OrderStatus
 
-load_dotenv()
+from Data.broker_data.enums import OrderStatus
+
+base_dir = os.path.dirname(os.path.abspath(__file__))
+token_path = os.path.join(base_dir, "access_token.env")
+load_dotenv(dotenv_path=token_path)
 
 
 class BrockerInterface(ABC):

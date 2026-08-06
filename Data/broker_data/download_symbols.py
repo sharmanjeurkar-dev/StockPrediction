@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 
 import pandas as pd
 import requests
-from broker_exceptions.SymbolMasterUnavailableException import (
+
+from Data.broker_data.broker_exceptions import (
     SymbolMasterUnavailableException,
 )
 

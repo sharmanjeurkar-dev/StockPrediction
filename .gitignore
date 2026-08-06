@@ -28,3 +28,9 @@ tft_model.ckpt
 training_dataset.pkl
 lightning_logs/
 *.env
+Data/__init__.py
+Data/broker_data/__init__.py
+Data/broker_data/broker_exceptions/__init__.py
+Data/historical_data/__init__.py
+Data/liquidity_screener/__init__.py
+*__pycache__

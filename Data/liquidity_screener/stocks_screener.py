@@ -1,5 +1,6 @@
 import pandas as pd
-from broker_data.Fyersbrocker import FyersBrocker
+
+from Data.broker_data.Fyersbrocker import FyersBrocker
 
 
 def screener(

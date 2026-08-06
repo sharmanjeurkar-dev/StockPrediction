@@ -2,9 +2,10 @@ import os
 from datetime import datetime
 
 import pandas as pd
-from broker_data import download_symbols
-from broker_data.Fyersbrocker import FyersBrocker
-from liquidity_screener import stocks_screener
+
+from Data.broker_data import download_symbols
+from Data.broker_data.Fyersbrocker import FyersBrocker
+from Data.liquidity_screener import stocks_screener
 
 broker = FyersBrocker()
 HISTORICAL_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -133,3 +134,43 @@ def increment_data(symbol: str, last_date, end_date: datetime, df: pd.DataFrame)
         return True
     else:
         return False
+
+
+BENCHMARK_SYMBOL = "NSE:NIFTY50-INDEX"
+
+
+def save_benchmark_data(
+    resolution: str, DAYS: int, total_chunks: int, end_date: datetime = None
+):
+    """
+    Fetches/updates the market benchmark (Nifty 50) using the exact same
+    bootstrap-or-increment logic as every regular stock, so it stays in
+    sync with the rest of the historical data store. Called separately
+    from save_historical_data since the benchmark isn't part of the
+    screened universe and shouldn't go through liquidity screening.
+    """
+    if end_date is None:
+        end_date = datetime.now()
+
+    last_date = check_existing_data(BENCHMARK_SYMBOL)
+
+    if last_date is not None:
+        if last_date.date() == end_date.date():
+            print(f"{BENCHMARK_SYMBOL} already up to date")
+            return True
+        filepath = os.path.join(HISTORICAL_DATA_PATH, _safe_filename(BENCHMARK_SYMBOL))
+        existing_df = pd.read_parquet(filepath)
+        return increment_data(BENCHMARK_SYMBOL, last_date, end_date, existing_df)
+    else:
+        return bootstarp_symbol_history(
+            BENCHMARK_SYMBOL,
+            resolution=resolution,
+            DAYS=DAYS,
+            total_chunks=total_chunks,
+            end_date=end_date,
+        )
+
+
+if __name__ == "__main__":
+    result = save_benchmark_data(resolution="1D", DAYS=100, total_chunks=15)
+    print(result)

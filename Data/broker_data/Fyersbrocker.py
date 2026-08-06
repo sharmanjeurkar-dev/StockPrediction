@@ -4,14 +4,23 @@ import time
 from datetime import datetime, timedelta
 
 import pandas as pd
-from Brocker_interface import BrockerInterface
-from broker_exceptions.OrderCancelFailedException import OrderCancelFailedException
-from broker_exceptions.OrderNotFoundException import OrderNotFoundException
-from broker_exceptions.OrderRejectedException import OrderRejectedException
-from broker_exceptions.UnknownOrderException import UnknownOrderStatusException
 from dotenv import load_dotenv
-from enums import OrderStatus, OrderType, ProductType, Side
 from fyers_apiv3.fyersModel import FyersModel
+
+from Data.broker_data.Brocker_interface import BrockerInterface
+from Data.broker_data.broker_exceptions.OrderCancelFailedException import (
+    OrderCancelFailedException,
+)
+from Data.broker_data.broker_exceptions.OrderNotFoundException import (
+    OrderNotFoundException,
+)
+from Data.broker_data.broker_exceptions.OrderRejectedException import (
+    OrderRejectedException,
+)
+from Data.broker_data.broker_exceptions.UnknownOrderException import (
+    UnknownOrderStatusException,
+)
+from Data.broker_data.enums import OrderStatus, OrderType, ProductType, Side
 
 _SIDE_MAP = {
     Side.BUY: 1,
@@ -56,9 +65,8 @@ class FyersBrocker(BrockerInterface):
         self.secret_id = self.SECRET_ID
         self.redirect_uri = self.REDIRECT_URI
 
-        self.validate_token()
-
         self.token = self.get_token(self.client_id, self.secret_id)
+        self.validate_token()
 
         self.fyers = FyersModel(
             client_id=self.client_id, token=self.token, is_async=False, log_path=""
