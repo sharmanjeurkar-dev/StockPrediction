@@ -1,7 +1,19 @@
+import os
+import traceback
+
 import numpy as np
 import pandas as pd
 
-from Data.historical_data import historical_data_scraper
+from Data.historical_data.historical_data_scraper import (
+    BENCHMARK_SYMBOL,
+    HISTORICAL_DATA_PATH,
+    _safe_filename,
+)
+from Data.label import apply_triple_barrier_labels
+from Data.liquidity_screener.snapshot_store import load_snapshot
+
+bench_mark_symbol = _safe_filename(BENCHMARK_SYMBOL)
+BENCHMARK_DATA_PATH = os.path.join(HISTORICAL_DATA_PATH, bench_mark_symbol)
 
 
 def feature_enginiering(df: pd.DataFrame, symbol) -> pd.DataFrame:
@@ -105,17 +117,60 @@ def add_relative_strength(
     return df
 
 
-def concat_df(dfs: list[pd.DataFrame]) -> pd.DataFrame:
-    processed = []
+def build_training_set(
+    snapshot_date: str,
+    benchmark_path: str,
+    labeling_kwargs: dict | None = None,
+) -> pd.DataFrame:
+    universe_df, resolved_date = load_snapshot(snapshot_date)
+    symbols = universe_df["symbol"].tolist()
 
-    for df in dfs:
-        symbol = df["symbol"].iloc[0]
-        df_processed = feature_enginiering(df, symbol)
-        df_processed["symbol"] = symbol
-        processed.append(df_processed)
+    benchmark_df = pd.read_parquet(BENCHMARK_DATA_PATH)
+    processed_dataframes = []
+    failed_symbols = []
+    failure_reason = []
 
-    final_df = pd.concat(processed, ignore_index=False)
-    return final_df
+    for symbol in symbols:
+        # Name changing accrding to file name format
+        file_name = _safe_filename(symbol)
+        file = os.path.join(HISTORICAL_DATA_PATH, file_name)
+
+        if not os.path.isfile(file):
+            failed_symbols.append(symbol)
+            failure_reason.append(
+                f"File doesn't exist for symbol:{symbol} at location: {file}"
+            )
+            continue
+
+        df = pd.read_parquet(file)
+        if df.empty:
+            failed_symbols.append(symbol)
+            failure_reason.append(f"Dataframe for symbol: {symbol} found but is empty")
+            continue
+        try:
+            df = feature_enginiering(df, symbol)
+            df = add_relative_strength(df, benchmark_df, window=WINDOW)
+            df = apply_triple_barrier_labels(df)
+            df["symbol"] = symbol
+            processed_dataframes.append(df)
+
+        except Exception as e:
+            failed_symbols.append(symbol)
+            failure_reason.append("Failure in preprocessing of data")
+            print(f"Exception occured \n {traceback.extract_tb(e.__traceback__)}")
+
+    if not processed_dataframes:
+        raise ValueError("No symbols were successfully processed")
+
+    final_df = pd.concat(processed_dataframes, axis=0)
+
+    if failed_symbols:
+        print(f"{len(failed_symbols)} symbols failed: {failed_symbols}")
+
+    failure_df = pd.DataFrame(
+        {"Failed symbols": failed_symbols, "Failure Reason": failure_reason}
+    )
+    return final_df, failure_df
 
 
 def walk_forward_slices(
