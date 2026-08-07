@@ -1,6 +1,8 @@
 import numpy as np
 import pandas as pd
 
+from Data.historical_data import historical_data_scraper
+
 
 def feature_enginiering(df: pd.DataFrame, symbol) -> pd.DataFrame:
     df["symbol"] = symbol
@@ -62,6 +64,42 @@ def feature_enginiering(df: pd.DataFrame, symbol) -> pd.DataFrame:
 
     df.drop(columns=["OBV"], inplace=True)
 
+    df.dropna(inplace=True)
+    return df
+
+
+# relative strength with se: nifty-50 index
+WINDOW = 20
+
+
+def _returns_ND(window: int, price_close: str, df: pd.DataFrame) -> pd.Series:
+    """Trailing N-day return: today's price vs. price `window` days ago."""
+    return (df[price_close] / df[price_close].shift(window)) - 1
+
+
+def add_relative_strength(
+    df: pd.DataFrame, relative_index_df: pd.DataFrame, window: int = WINDOW
+) -> pd.DataFrame:
+    """
+    Adds a relative_strength column to df (a single stock's feature
+    dataframe, indexed by Datetime). relative_index_df is the benchmark's
+    (Nifty 50) dataframe, loaded ONCE by the caller and passed in here --
+    this function must never fetch the benchmark itself.
+    """
+    relative_index_df.set_index("Datetime", inplace=True)
+    stock_returns_ND = _returns_ND(window=window, price_close="Close", df=df)
+    benchmark_close = relative_index_df["Close"]
+    df["nifty-50-close"] = df.index.map(benchmark_close)
+
+    benchmark_returns_ND = _returns_ND(
+        window=window, price_close="nifty-50-close", df=df
+    )
+
+    df["relative_strength"] = stock_returns_ND - benchmark_returns_ND
+    # +ve: stock outperformed the market over the window
+    # -ve: stock underperformed the market over the window
+
+    df.drop(columns=["nifty-50-close"], inplace=True)
     df.dropna(inplace=True)
 
     return df
