@@ -12,8 +12,8 @@ from Data.historical_data.historical_data_scraper import (
 from Data.label import apply_triple_barrier_labels
 from Data.liquidity_screener.snapshot_store import load_snapshot
 
-bench_mark_symbol = _safe_filename(BENCHMARK_SYMBOL)
-BENCHMARK_DATA_PATH = os.path.join(HISTORICAL_DATA_PATH, bench_mark_symbol)
+benchmark_filename = _safe_filename(BENCHMARK_SYMBOL)
+BENCHMARK_DATA_PATH = os.path.join(HISTORICAL_DATA_PATH, benchmark_filename)
 
 
 def feature_enginiering(df: pd.DataFrame, symbol) -> pd.DataFrame:
