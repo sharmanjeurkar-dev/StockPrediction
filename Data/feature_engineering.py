@@ -173,28 +173,52 @@ def build_training_set(
     return final_df, failure_df
 
 
-def walk_forward_slices(
-    df: pd.DataFrame,
-    date_col: str = "Datetime",
-    symbol_col: str = "symbol",
-    embargo_candles: int = 8,
-) -> list:
-    df = df.copy()
-    df[date_col] = pd.to_datetime(df[date_col])
-    years = sorted(df[date_col].dt.year.unique())
-    append_df = []
+def walk_forward_out_of_sample_dataframe_slices(
+    df: pd.DataFrame, startDate, endDate, jump: int, max_days: int
+) -> list[list[pd.DataFrame]]:
 
-    for i in range(1, len(years)):
-        train_years = years[:i]
-        train_df = df[df[date_col].dt.year.isin(train_years)].copy()
+    total_months = (endDate.year - startDate.year) * 12 + (
+        endDate.month - startDate.month
+    )
+    dfcollection = []
+    counter = 1
+    for i in range(0, total_months, jump):
+        nextSetEndDate = startDate + pd.DateOffset(months=jump + i)
+        nextSetEndDatetWithoutEmbargo = nextSetEndDate - pd.DateOffset(days=max_days)
+        testNextSetEndDate = nextSetEndDate + pd.DateOffset(months=jump)
 
-        if embargo_candles > 0:
-            train_df = train_df.sort_values([symbol_col, date_col])
-            row_rank_desc = train_df.groupby(symbol_col).cumcount(ascending=False)
-            train_df = train_df[row_rank_desc >= embargo_candles]
+        if testNextSetEndDate <= endDate:
+            print(
+                f"Slice {counter}| Start Date: {startDate} | Train End Date: {nextSetEndDatetWithoutEmbargo} | Test End Date: {testNextSetEndDate}"
+            )
+            counter += 1
+            train_sliced_df = df[startDate:nextSetEndDatetWithoutEmbargo]
+            test_sliced_df = df[nextSetEndDate:testNextSetEndDate]
+            print(
+                f"Length of training Dataset: {len(train_sliced_df)} | Length of testing Dataset: {len(test_sliced_df)}"
+            )
+            dfcollection.append([train_sliced_df, test_sliced_df])
+        else:
+            train_sliced_df = df[startDate:nextSetEndDatetWithoutEmbargo]
+            test_sliced_df = df[nextSetEndDate:]
+            dfcollection.append([train_sliced_df, test_sliced_df])
+            print("All sets before the end date covered")
+            break
+    return dfcollection
 
-        test_year = years[i]
-        test_df = df[df[date_col].dt.year == test_year].copy()
-        append_df.append((train_df, test_df))
 
-    return append_df
+dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="D")
+test_df = pd.DataFrame({"Close": range(len(dates))}, index=dates)
+folds = walk_forward_slices(
+    df=test_df,
+    startDate=pd.Timestamp("2023-01-01"),
+    endDate=pd.Timestamp("2023-12-31"),
+    jump=3,
+    max_days=5,
+)
+
+for i, (train_df, test_df_slice) in enumerate(folds):
+    print(
+        f"Fold {i}: train {train_df.index.min()} to {train_df.index.max()}, "
+        f"test {test_df_slice.index.min()} to {test_df_slice.index.max()}"
+    )
