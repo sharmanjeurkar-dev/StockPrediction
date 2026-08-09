@@ -119,7 +119,6 @@ def add_relative_strength(
 
 def build_training_set(
     snapshot_date: str,
-    benchmark_path: str,
     labeling_kwargs: dict | None = None,
 ) -> pd.DataFrame:
     universe_df, resolved_date = load_snapshot(snapshot_date)
@@ -205,20 +204,3 @@ def walk_forward_out_of_sample_dataframe_slices(
             print("All sets before the end date covered")
             break
     return dfcollection
-
-
-dates = pd.date_range(start="2023-01-01", end="2023-12-31", freq="D")
-test_df = pd.DataFrame({"Close": range(len(dates))}, index=dates)
-folds = walk_forward_slices(
-    df=test_df,
-    startDate=pd.Timestamp("2023-01-01"),
-    endDate=pd.Timestamp("2023-12-31"),
-    jump=3,
-    max_days=5,
-)
-
-for i, (train_df, test_df_slice) in enumerate(folds):
-    print(
-        f"Fold {i}: train {train_df.index.min()} to {train_df.index.max()}, "
-        f"test {test_df_slice.index.min()} to {test_df_slice.index.max()}"
-    )

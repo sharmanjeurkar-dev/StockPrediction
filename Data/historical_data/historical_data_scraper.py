@@ -172,7 +172,7 @@ def save_benchmark_data(
 
 
 if __name__ == "__main__":
-    result = save_benchmark_data(resolution="1D", DAYS=100, total_chunks=15)
+    result = save_benchmark_data(resolution="1D", DAYS=365, total_chunks=15)
     print(result)
     df = pd.read_parquet("Data/historical_data/data/NSE_NIFTY50-INDEX.parquet")
     print(df.attrs.get("missing_ranges"))

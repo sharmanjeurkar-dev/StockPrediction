@@ -45,7 +45,6 @@ def load_snapshot(target_date_str: str) -> tuple[pd.DataFrame, str]:
 
 
 def save_snapshot(snapshot_date_str: str, universal_df: pd.DataFrame, overwrite=False):
-    target_date = datetime.strptime(snapshot_date_str, "%Y-%m-%d").date()
     file = os.path.join(path, f"{snapshot_date_str}.parquet")
     os.makedirs(path, exist_ok=True)
 
