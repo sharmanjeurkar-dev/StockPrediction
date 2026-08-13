@@ -34,10 +34,10 @@ def save_histortrical_data(
         symbols=symbol_list,
         as_of_date=today,
         lookback_days=90,
-        min_avg_daily_value=20000000,
+        min_avg_daily_value=210000000,
     )
 
-    valid_symbols = snapshot["symbols"]
+    valid_symbols = snapshot["symbol"]
 
     for vs in valid_symbols:
         last_date = check_existing_data(vs)

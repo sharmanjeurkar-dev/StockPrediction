@@ -98,7 +98,6 @@ def add_relative_strength(
     (Nifty 50) dataframe, loaded ONCE by the caller and passed in here --
     this function must never fetch the benchmark itself.
     """
-    relative_index_df.set_index("Datetime", inplace=True)
     stock_returns_ND = _returns_ND(window=window, price_close="Close", df=df)
     benchmark_close = relative_index_df["Close"]
     df["nifty-50-close"] = df.index.map(benchmark_close)
@@ -173,34 +172,34 @@ def build_training_set(
 
 
 def walk_forward_out_of_sample_dataframe_slices(
-    df: pd.DataFrame, startDate, endDate, jump: int, max_days: int
+    df: pd.DataFrame, startDate=None, endDate=None, jump: int = 3, max_days: int = 8
 ) -> list[list[pd.DataFrame]]:
+    if startDate is None:
+        startDate = df.index.min()
+    if endDate is None:
+        endDate = df.index.max()
 
     total_months = (endDate.year - startDate.year) * 12 + (
         endDate.month - startDate.month
     )
+
     dfcollection = []
-    counter = 1
     for i in range(0, total_months, jump):
         nextSetEndDate = startDate + pd.DateOffset(months=jump + i)
-        nextSetEndDatetWithoutEmbargo = nextSetEndDate - pd.DateOffset(days=max_days)
+        nextSetEndDateWithoutEmbargo = nextSetEndDate - pd.DateOffset(days=max_days)
         testNextSetEndDate = nextSetEndDate + pd.DateOffset(months=jump)
 
+        train_mask = (df.index >= startDate) & (
+            df.index <= nextSetEndDateWithoutEmbargo
+        )
+        test_mask = (df.index >= nextSetEndDate) & (df.index <= testNextSetEndDate)
+
         if testNextSetEndDate <= endDate:
-            print(
-                f"Slice {counter}| Start Date: {startDate} | Train End Date: {nextSetEndDatetWithoutEmbargo} | Test End Date: {testNextSetEndDate}"
-            )
-            counter += 1
-            train_sliced_df = df[startDate:nextSetEndDatetWithoutEmbargo]
-            test_sliced_df = df[nextSetEndDate:testNextSetEndDate]
-            print(
-                f"Length of training Dataset: {len(train_sliced_df)} | Length of testing Dataset: {len(test_sliced_df)}"
-            )
-            dfcollection.append([train_sliced_df, test_sliced_df])
+            dfcollection.append([df[train_mask], df[test_mask]])
         else:
-            train_sliced_df = df[startDate:nextSetEndDatetWithoutEmbargo]
-            test_sliced_df = df[nextSetEndDate:]
-            dfcollection.append([train_sliced_df, test_sliced_df])
+            test_mask_final = df.index >= nextSetEndDate
+            dfcollection.append([df[train_mask], df[test_mask_final]])
             print("All sets before the end date covered")
             break
+
     return dfcollection

@@ -118,7 +118,7 @@ class FyersBrocker(BrockerInterface):
     ) -> pd.DataFrame | None:
         all_data = []
         failed_chunks = []
-        MAX_RETRIES = 5
+        MAX_RETRIES = 2
         RETRY_DELAY_SECOND = 2
 
         if end_date is None:
@@ -196,7 +196,9 @@ class FyersBrocker(BrockerInterface):
 
             # Set Datetime as index
             final_df.set_index("Datetime", inplace=True)
-            final_df.attrs["missing_ranges"] = failed_chunks
+            final_df.attrs["missing_ranges"] = [
+                (str(start), str(end)) for start, end in failed_chunks
+            ]
             return final_df
 
     # live data pooling
