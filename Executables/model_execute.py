@@ -1,6 +1,6 @@
 import os
 import pickle
-import sys
+from datetime import datetime, timedelta
 
 import lightning.pytorch as pl
 import matplotlib.pyplot as plt
@@ -14,14 +14,15 @@ from pytorch_forecasting.metrics import QuantileLoss
 from scipy.stats import spearmanr
 from torch.utils.data import WeightedRandomSampler
 
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(script_dir, ".."))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-from Data.Data_preprocessing import concat_df, walk_forward_slices
-
-from archive.data_scraper import scrape_data
+from Data.feature_engineering import (
+    HISTORICAL_DATA_PATH,
+    build_training_set,
+    walk_forward_out_of_sample_dataframe_slices,
+)
+from Data.historical_data.historical_data_scraper import (
+    save_benchmark_data,
+    save_histortrical_data,
+)
 
 TARGET = "Target"
 GROUP = "symbol"
@@ -30,46 +31,68 @@ DATE_COL = "date"
 MAX_ENCODER_LENGTH = 32
 MAX_PRED_LENGTH = 1
 EMBARGO_HOURS = 2
+RESOLUTION = "1D"
+DAYS = 365
+TOTAL_CHUNKS = 5
+END_DATE = TODAY = datetime.now()
 
-df1 = scrape_data("NSE:PAYTM-EQ")  # paytm
-df2 = scrape_data("NSE:TCS-EQ")  # tcs
-df3 = scrape_data("NSE:HINDUNILVR-EQ")  # Hindustan Unilever
+# Scan the univrse, screen the right symbols, download the historical data for timedelta greater than one day
+all_items = os.listdir(HISTORICAL_DATA_PATH)
+if all_items:
+    first_item_path = os.path.join(HISTORICAL_DATA_PATH, all_items[0])
+    if os.path.isfile(first_item_path):
+        print("Historical data files found found")
+        raw_time = os.path.getctime(first_item_path)
+        file_creation_date = datetime.fromtimestamp(raw_time).date()
 
-df_raw = [df1, df2, df3]
-df = concat_df(df_raw)
+        target_date = TODAY.date()
+
+        time_difference = target_date - file_creation_date
+        print(f"Time difference in creation and today:{time_difference}")
+        if time_difference > timedelta(2):
+            print("Data stale....\nDownloading fresh data......")
+            failed_symbols = save_histortrical_data(
+                resolution=RESOLUTION,
+                DAYS=DAYS,
+                total_chunks=TOTAL_CHUNKS,
+                end_date=END_DATE,
+            )
+
+            if failed_symbols is not None:
+                print(len(failed_symbols))
+                for fs in failed_symbols:
+                    print(fs, "\t")
+
+            # downloading/Updating the benchmark index historical data
+            _ = save_benchmark_data(
+                resolution=RESOLUTION,
+                DAYS=DAYS,
+                total_chunks=TOTAL_CHUNKS,
+                end_date=END_DATE,
+            )
+
+# accessing the benchmark_data file
+benchmark_df = pd.read_parquet("Data/historical_data/data/NSE_NIFTY50-INDEX.parquet")
+
+# build the training dataset -> combine the index data as well all the symbol data, feuture engineer, labeling and target formation
+df, _ = build_training_set(snapshot_date=datetime.strftime(TODAY, "%Y-%m-%d"))
+print(f"\t \t {len(df)} \t \t")
 df = df.sort_values(by=["symbol", "Datetime"])
-df["timeidx"] = df.groupby("symbol").cumcount()
-df = df.reset_index()
 
-float_cols = [
+features = [
     "MA-Cross",
-    "Bollinger-Bandwidth",
-    "ATR-Ratio",
+    "ATR-Ratio",       
     "OBV-ROC",
-    "%-Band",
     "Volume-Rate-of-Change",
     "RSI-close-score",
     "Intraday_Spread",
-    "Time_Sin",
-    "Time_Cos",
     "Target",
+    "MA-200",
+    "VWAP-20D-Dist",
+    "relative_strength",
 ]
-df[float_cols] = df[float_cols].astype(np.float32)
 
-train_data_cutoff = int(df["timeidx"].max() * 0.80)
-
-train_df = df[df["timeidx"] <= train_data_cutoff].copy()
-train_df = train_df.reset_index(drop=True)
-
-pos_count = (train_df["Target"] > 0).sum()
-neg_count = (train_df["Target"] < 0).sum()
-zero_count = (train_df["Target"] == 0).sum()
-
-weights_full = np.where(
-    train_df["Target"] > 0,
-    1.0 / pos_count,
-    np.where(train_df["Target"] < 0, 1.0 / neg_count, 1.0 / zero_count),
-)
+df[features] = df[features].astype(np.float32)
 
 
 def rebuild_time_idx(df, symbol_col="symbol"):
@@ -84,20 +107,17 @@ def build_dataset(train_df, test_df):
         time_idx="timeidx",
         target="Target",
         group_ids=["symbol"],
-        max_encoder_length=32,
-        max_prediction_length=1,
-        time_varying_known_reals=["Time_Sin", "Time_Cos"],
+        max_encoder_length=MAX_ENCODER_LENGTH,
+        max_prediction_length=MAX_PRED_LENGTH,
+        time_varying_known_reals=[],
         time_varying_unknown_reals=[
             "MA-Cross",
-            "Bollinger-Bandwidth",
             "ATR-Ratio",
             "OBV-ROC",
-            "%-Band",
             "Volume-Rate-of-Change",
             "RSI-close-score",
             "Intraday_Spread",
         ],
-        static_categoricals=["symbol"],
         target_normalizer=TorchNormalizer(method="robust"),
         allow_missing_timesteps=True,
         add_relative_time_idx=True,
@@ -114,7 +134,7 @@ def build_dataset(train_df, test_df):
     target_tensor = training.data["target"][0]
     target_values = target_tensor[dataset_indices].numpy().reshape(-1)
 
-    labels = (target_values != 0.0).astype(int)
+    labels = (target_values > 0).astype(int)
     class_counts = np.bincount(labels, minlength=2)
     class_weights = 1.0 / np.maximum(class_counts, 1)
     weights_aligned = class_weights[labels]
@@ -126,18 +146,19 @@ def build_dataset(train_df, test_df):
     )
 
     train_dataloader = training.to_dataloader(
-        train=False, batch_size=128, num_workers=0, sampler=sampler
+        train=False, batch_size=256, num_workers=0, sampler=sampler
     )
     validation_dataloader = validation.to_dataloader(
-        train=False, batch_size=128, num_workers=0
+        train=False, batch_size=256, num_workers=0
     )
+    print("class_counts:", class_counts)
     return training, validation, train_dataloader, validation_dataloader
 
 
 def model_and_trainer_setup(training: TimeSeriesDataSet):
     model = TemporalFusionTransformer.from_dataset(
         training,
-        hidden_size=64,
+        hidden_size=128,
         attention_head_size=4,
         dropout=0.1,
         hidden_continuous_size=16,
@@ -146,20 +167,21 @@ def model_and_trainer_setup(training: TimeSeriesDataSet):
         optimizer="adam",
         reduce_on_plateau_patience=5,
     )
-    early_stop = EarlyStopping(monitor="val_loss", patience=10, mode="min")
+    early_stop = EarlyStopping(monitor="val_loss", patience=15, mode="min")
     # training and validation
     trainer = pl.Trainer(
         max_epochs=100,
-        accelerator="mps",
+        accelerator="mps"
+        if torch.backends.mps.is_available()
+        else "cuda"
+        if torch.cuda.is_available()
+        else "cpu",
         gradient_clip_val=0.1,
         callbacks=[early_stop],
         logger=False,
         enable_checkpointing=False,
         enable_progress_bar=True,
     )
-    print(training.static_categoricals)
-    print(train_df["symbol"].dtype)
-    print(train_df["symbol"].unique())
     return model, trainer
 
 
@@ -190,7 +212,6 @@ def compute_fold_metrics(model, val_dl, validation_dataset, test_df, fold_id):
         (merged["actual"] >= merged["pred_p10"])
         & (merged["actual"] <= merged["pred_p90"])
     ).mean()
-    improvement = ic - 0.1651
 
     per_symbol_ic = {}
     for sym, g in merged.groupby(GROUP):
@@ -204,7 +225,6 @@ def compute_fold_metrics(model, val_dl, validation_dataset, test_df, fold_id):
         "pvalue": pval,
         "coverage": coverage,
         "n_test_rows": len(merged),
-        "improvement from baseline": improvement,
         **{f"ic_{k}": v for k, v in per_symbol_ic.items()},
     }
 
@@ -267,14 +287,14 @@ def plot_model_output(model, validation_dataloader):
 
 
 # WalkForward Slicing for training and Out of sample Validation
-df_acc_folds = walk_forward_slices(
-    df=df, symbol_col="symbol", date_col="Datetime", embargo_candles=8
-)
+df_acc_folds = walk_forward_out_of_sample_dataframe_slices(df=df)
 
 results = []
 for i, (train_df, test_df) in enumerate(df_acc_folds):
     train_df = rebuild_time_idx(train_df, symbol_col="symbol")
+    train_df = train_df.reset_index(drop=True)
     test_df = rebuild_time_idx(test_df, symbol_col="symbol")
+    test_df = test_df.reset_index(drop=True)
 
     training, validation, train_dataloader, validation_dataloader = build_dataset(
         train_df=train_df, test_df=test_df
