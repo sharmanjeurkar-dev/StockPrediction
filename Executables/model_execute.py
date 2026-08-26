@@ -41,7 +41,7 @@ all_items = os.listdir(HISTORICAL_DATA_PATH)
 if all_items:
     first_item_path = os.path.join(HISTORICAL_DATA_PATH, all_items[0])
     if os.path.isfile(first_item_path):
-        print("Historical data files found found")
+        print("Historical data files found")
         raw_time = os.path.getctime(first_item_path)
         file_creation_date = datetime.fromtimestamp(raw_time).date()
 
@@ -49,7 +49,7 @@ if all_items:
 
         time_difference = target_date - file_creation_date
         print(f"Time difference in creation and today:{time_difference}")
-        if time_difference > timedelta(2):
+        if time_difference > timedelta(30):
             print("Data stale....\nDownloading fresh data......")
             failed_symbols = save_histortrical_data(
                 resolution=RESOLUTION,
@@ -76,23 +76,24 @@ benchmark_df = pd.read_parquet("Data/historical_data/data/NSE_NIFTY50-INDEX.parq
 
 # build the training dataset -> combine the index data as well all the symbol data, feuture engineer, labeling and target formation
 df, _ = build_training_set(snapshot_date=datetime.strftime(TODAY, "%Y-%m-%d"))
+float64_cols = df.select_dtypes(include=["float64"]).columns
+df[float64_cols] = df[float64_cols].astype(np.float32)
 print(f"\t \t {len(df)} \t \t")
 df = df.sort_values(by=["symbol", "Datetime"])
 
 features = [
-    "MA-Cross",
-    "ATR-Ratio",       
-    "OBV-ROC",
-    "Volume-Rate-of-Change",
-    "RSI-close-score",
     "Intraday_Spread",
-    "Target",
-    "MA-200",
-    "VWAP-20D-Dist",
-    "relative_strength",
+    "ATR-Ratio",
+    "Intraday_Spread_Zscore",
+    "RSI-close-score",
+    "relative_strength_60d",
+    "relative_strength_120d",
+    "Vol_Percentile_Rank",
+    "Beta_60D",
 ]
 
 df[features] = df[features].astype(np.float32)
+df.dropna(inplace=True)
 
 
 def rebuild_time_idx(df, symbol_col="symbol"):
@@ -111,12 +112,14 @@ def build_dataset(train_df, test_df):
         max_prediction_length=MAX_PRED_LENGTH,
         time_varying_known_reals=[],
         time_varying_unknown_reals=[
-            "MA-Cross",
-            "ATR-Ratio",
-            "OBV-ROC",
-            "Volume-Rate-of-Change",
-            "RSI-close-score",
             "Intraday_Spread",
+            "ATR-Ratio",
+            "Intraday_Spread_Zscore",
+            "RSI-close-score",
+            "relative_strength_60d",
+            "relative_strength_120d",
+            "Vol_Percentile_Rank",
+            "Beta_60D",
         ],
         target_normalizer=TorchNormalizer(method="robust"),
         allow_missing_timesteps=True,

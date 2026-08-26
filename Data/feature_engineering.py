@@ -37,16 +37,6 @@ def feature_enginiering(df: pd.DataFrame, symbol) -> pd.DataFrame:
 
     df["Intraday_Spread"] = (df["High"] - df["Low"]) / df["Close"]
 
-    # On-Balance Volume (OBV)
-    condition = [(df["Change"] > 0), (df["Change"] < 0)]
-    choices = [1, -1]
-    df["obv-dir"] = np.select(condition, choices, default=0)
-    df["OBV"] = (df["Volume"] * df["obv-dir"]).cumsum()
-    df["OBV-ROC"] = df["OBV"].pct_change(10).replace([np.inf, -np.inf], 0).fillna(0)
-    df["Volume-Rate-of-Change"] = (df["Volume"].pct_change(periods=10)).replace(
-        [np.inf, -np.inf], 0
-    ).fillna(0) * 100
-
     # ATR Compressoin Ratio
     df["high_low"] = df["High"] - df["Low"]
     df["high_prev_close"] = (df["High"] - df["Close"].shift(1)).abs()
@@ -63,25 +53,65 @@ def feature_enginiering(df: pd.DataFrame, symbol) -> pd.DataFrame:
 
     df["Daily_Vol"] = df["Close"].pct_change().rolling(window=25).std()
 
-    df["MA-20"] = df["Close"].rolling(window=20).mean()
-    df["MA-50"] = df["Close"].rolling(window=50).mean()
-    df["MA-200"] = df["Close"].rolling(window=200).mean()
-    df["MA-Cross"] = (df["MA-20"] - df["MA-50"]) / df["MA-50"]
-
     # VWAP
     rolling_vwap = (df["Close"] * df["Volume"]).rolling(window=20).sum() / df[
         "Volume"
     ].rolling(window=20).sum()
     df["VWAP-20D-Dist"] = (df["Close"] - rolling_vwap) / rolling_vwap
 
-    df.drop(columns=["OBV"], inplace=True)
+    # Gap open
+    df["Overnight_Gap"] = df["Open"] - df["Close"].shift(1)
 
+    # Gap Fill ratio
+    df["Fill"] = df["Close"] - df["Open"]
+    df["Gap_Fill_Ratio"] = df["Fill"] / df["Overnight_Gap"]
+    df["Gap_Fill_Ratio"] = df["Gap_Fill_Ratio"].replace([np.inf, -np.inf], np.nan)
+
+    # High low disatnce through out rolling year
+    df["Dist_52W_High"] = df["Close"] - df["Close"].rolling(window=252).max()
+    df["Dist_52W_Low"] = df["Close"] - df["Close"].rolling(window=252).min()
+
+    # Intraday spread zscore
+    df["Intraday_Spread_MA20"] = df["Intraday_Spread"].rolling(window=20).mean()
+    df["Intraday_Spread_STD20"] = df["Intraday_Spread"].rolling(window=20).std()
+    df["Intraday_Spread_Zscore"] = (
+        df["Intraday_Spread"] - df["Intraday_Spread_MA20"]
+    ) / df["Intraday_Spread_STD20"]
+    df["Intraday_Spread_Zscore"] = df["Intraday_Spread_Zscore"].replace(
+        [np.inf, -np.inf], np.nan
+    )
+    df["Amihud_Illiquidity"] = df["Returns"] / (df["Close"] * df["Volume"])
     df.dropna(inplace=True)
     return df
 
 
+def add_cross_sectional_vol_rank(
+    df: pd.DataFrame, vol_col: str = "Daily_Vol", date_col: str = "Datetime"
+) -> pd.DataFrame:
+    df["Vol_Percentile_Rank"] = df.groupby(date_col)[vol_col].rank(pct=True)
+    return df
+
+
+def add_rolling_beta(
+    df: pd.DataFrame,
+    relative_index_df: pd.DataFrame,
+    window: int = 60,
+    return_col: str = "Returns",
+) -> pd.DataFrame:
+    relative_index_df["Returns"] = relative_index_df["Close"].pct_change()
+    benchmark_returns = relative_index_df[return_col]
+    df["nifty-50-returns"] = df.index.map(benchmark_returns)
+
+    rolling_cov = df[return_col].rolling(window).cov(df["nifty-50-returns"])
+    rolling_var = df["nifty-50-returns"].rolling(window).var()
+
+    df["Beta_60D"] = rolling_cov / rolling_var
+    df.drop(columns=["nifty-50-returns"], inplace=True)
+    return df
+
+
 # relative strength with se: nifty-50 index
-WINDOW = 20
+WINDOW = [60, 120]
 
 
 def _returns_ND(window: int, price_close: str, df: pd.DataFrame) -> pd.Series:
@@ -90,7 +120,7 @@ def _returns_ND(window: int, price_close: str, df: pd.DataFrame) -> pd.Series:
 
 
 def add_relative_strength(
-    df: pd.DataFrame, relative_index_df: pd.DataFrame, window: int = WINDOW
+    df: pd.DataFrame, relative_index_df: pd.DataFrame, window: list[int] = WINDOW
 ) -> pd.DataFrame:
     """
     Adds a relative_strength column to df (a single stock's feature
@@ -98,15 +128,16 @@ def add_relative_strength(
     (Nifty 50) dataframe, loaded ONCE by the caller and passed in here --
     this function must never fetch the benchmark itself.
     """
-    stock_returns_ND = _returns_ND(window=window, price_close="Close", df=df)
-    benchmark_close = relative_index_df["Close"]
-    df["nifty-50-close"] = df.index.map(benchmark_close)
+    for w in window:
+        stock_returns_ND = _returns_ND(window=w, price_close="Close", df=df)
+        benchmark_close = relative_index_df["Close"]
+        df["nifty-50-close"] = df.index.map(benchmark_close)
 
-    benchmark_returns_ND = _returns_ND(
-        window=window, price_close="nifty-50-close", df=df
-    )
+        benchmark_returns_ND = _returns_ND(
+            window=w, price_close="nifty-50-close", df=df
+        )
 
-    df["relative_strength"] = stock_returns_ND - benchmark_returns_ND
+        df[f"relative_strength_{w}d"] = stock_returns_ND - benchmark_returns_ND
     # +ve: stock outperformed the market over the window
     # -ve: stock underperformed the market over the window
 
@@ -148,6 +179,7 @@ def build_training_set(
         try:
             df = feature_enginiering(df, symbol)
             df = add_relative_strength(df, benchmark_df, window=WINDOW)
+            df = add_rolling_beta(df, benchmark_df, window=60)
             df = apply_triple_barrier_labels(df)
             df["symbol"] = symbol
             processed_dataframes.append(df)
@@ -161,6 +193,7 @@ def build_training_set(
         raise ValueError("No symbols were successfully processed")
 
     final_df = pd.concat(processed_dataframes, axis=0)
+    final_df = add_cross_sectional_vol_rank(final_df)
 
     if failed_symbols:
         print(f"{len(failed_symbols)} symbols failed: {failed_symbols}")
